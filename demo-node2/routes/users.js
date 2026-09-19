@@ -1,5 +1,10 @@
 var express = require("express");
 var router = express.Router();
+const { getUser, createUser } = require("../controllers/user");
+
+// Tại sao chỗ này lại import bằng ngoặc nhọn mà ko pahir mỗi tên thôi
+// vì controller có nhiều function nên ko có default, ko có default phải dùng ngoặc nhọn
+// nếu controller users dùng default thì nếu có nhiều function thì chỉ export đc 1 hàm duy nhất thôi
 const user = [];
 
 const { body, validationResult } = require("express-validator");
@@ -15,28 +20,16 @@ const validates = [
   },
 ];
 /* GET users listing. */
-router.get("/", function (req, res, next) {
-  try {
-    res.send("respond with a resource");
-  } catch (err) {
-    console.log(err);
-    next(err);
-  }
-});
-router.post("/", validates, function (req, res, next) {
-  try {
-    const body = {
-      name: req.body.name,
-      email: req.body.email,
-    };
-    user.push(body);
-    res.status(201).json({
-      message: "User created successfully",
-    });
-  } catch (err) {
-    console.log(err);
-    next(err);
-  }
-});
+// router.get("/", function (req, res, next) {
+//   try {
+//     res.send("respond with a resource");
+//   } catch (err) {
+//     console.log(err);
+//     next(err);
+//   }
+// });
+
+router.get("/", getUser);
+router.post("/", validates, createUser);
 
 module.exports = router;
