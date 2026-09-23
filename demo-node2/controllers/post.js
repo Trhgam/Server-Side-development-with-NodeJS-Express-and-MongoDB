@@ -6,6 +6,7 @@ async function getPosts(req, res, next) {
     const posts = await postModel.find().populate({
       path: "author",
       select: "name",
+      // match:{ like {$gt: }}
     });
     res.json(posts);
   } catch (err) {
@@ -38,3 +39,15 @@ module.exports = {
 // select: "name -_id"
 // Nếu bạn muốn lấy tất cả ngoại trừ 1 trường nào đó (ví dụ bỏ email):
 // select: "-email";
+
+// có thể populate nhiều field or nhiều collection khác nhau
+// Dùng hàm match để filter với operator bữa thqfay dạy $gt $gt
+//
+
+// Populate nếu obejct id bị thiếu thì sao ?
+// Mongo lúc nào cũng có thể xóa được
+// Nếu dùng Object Id bằn populate mà ko check reference thì sẽ dẫn đến null tức sẽ crash app
+// Dùng các prop trong populate thì phải dùng ? vì  nso sẽ check nếu ko có nó trả về undefine
+// retainNullValues: true; giữ lại các trường có giá trị null thay vì tự động loại bỏ chúng.
+// .lean(); dùng khi method là get , ko cần thay đổi nên ko cần tracking nó
+// api .lean() performance sẽ tốt hơn vì nó bỏ qua các giai đoạn còn lại vì nó sẽ tốt hơn
