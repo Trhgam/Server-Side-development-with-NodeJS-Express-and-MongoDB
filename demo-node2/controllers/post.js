@@ -3,7 +3,10 @@ const postModel = require("../models/post");
 
 async function getPosts(req, res, next) {
   try {
-    const posts = await postModel.find().populate("author");
+    const posts = await postModel.find().populate({
+      path: "author",
+      select: "name",
+    });
     res.json(posts);
   } catch (err) {
     next(err);
@@ -30,4 +33,8 @@ module.exports = {
 };
 // Dùng common Js cần export function ra mới dùng được nha
 
-// Muốn loại bỏ field nào thì trừ sau populate, muốn lấy nào thì  sau , thì thêm field muốn lấy 
+// Muốn loại bỏ field nào thì trừ sau populate, muốn lấy nào thì  sau , thì thêm field muốn lấy
+// Nếu bạn muốn bỏ luôn cả _id (chỉ lấy duy nhất name), bạn có thể thêm dấu -:
+// select: "name -_id"
+// Nếu bạn muốn lấy tất cả ngoại trừ 1 trường nào đó (ví dụ bỏ email):
+// select: "-email";
