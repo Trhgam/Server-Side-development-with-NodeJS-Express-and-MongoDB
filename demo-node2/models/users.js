@@ -28,7 +28,6 @@ const userSchema = new moogoose.Schema({
 // nhưng cần  model nên là
 // model("Tên model", schema) schema là cái đã khai báo và code ở trên á
 // viết không cần có s nó tự ánh xạ, nếu có s rồi thì nó ko cần thêm
-module.exports = moogoose.model("User", userSchema, "test");
 
 // Mốt code theo MVC
 // Model: là nơi tương tác với db, viết các hàm để thao tác với db
@@ -44,3 +43,15 @@ module.exports = moogoose.model("User", userSchema, "test");
 
 // Index: đánh trên field sort search hay truy xuất nhiều, dùng cho trừng hợp email do email ko đc rùng nnhau
 // unique: true là ko đc trùng nhau, vd như email, username, phone, ...
+userSchema.virtual("Post", {
+  ref: "Post",
+  localField: "_id",
+  foreignField: "author",
+});
+userSchema.virtual("fullname").get(function () {
+  return `${this.name} Nguyen`;
+});
+userSchema.set("toJSON", { virtuals: true });
+userSchema.set("toObject", { virtuals: true });
+
+module.exports = moogoose.model("User", userSchema, "test");

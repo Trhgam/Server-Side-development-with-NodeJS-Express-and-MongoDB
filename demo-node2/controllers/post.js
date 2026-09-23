@@ -51,3 +51,7 @@ module.exports = {
 // retainNullValues: true; giữ lại các trường có giá trị null thay vì tự động loại bỏ chúng.
 // .lean(); dùng khi method là get , ko cần thay đổi nên ko cần tracking nó
 // api .lean() performance sẽ tốt hơn vì nó bỏ qua các giai đoạn còn lại vì nó sẽ tốt hơn
+
+
+// Mongo $lookup => mongosh
+// Virtual Populate => mongoose (schema)

@@ -6,7 +6,7 @@ async function getUser(req, res, next) {
   // và do code async nên phải dùng await để chờ kết quả trả về từ db và thêm try catch
 
   try {
-    const users = await userModel.find();
+    const users = await userModel.find().populate("Post"); // thêm populate vào chỗ nãy thì mới ra được nha
     res.json(users);
   } catch (err) {
     next(err);
