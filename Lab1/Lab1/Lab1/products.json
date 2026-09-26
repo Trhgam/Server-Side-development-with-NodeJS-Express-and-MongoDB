@@ -1,0 +1,122 @@
+[
+  {
+    "_id": { "$oid": "651000000000000000000001" },
+    "name": "MacBook Air M2",
+    "category": "Laptop",
+    "price": 2499,
+    "stock": 8,
+    "tags": ["apple", "laptop", "portable"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000001" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000002" },
+    "name": "Dell Inspiron 15",
+    "category": "Laptop",
+    "price": 899,
+    "stock": 12,
+    "tags": ["windows", "laptop", "student"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000002" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000003" },
+    "name": "Lenovo ThinkPad E14",
+    "category": "Laptop",
+    "price": 1099,
+    "stock": 0,
+    "tags": ["business", "laptop", "windows"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000002" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000004" },
+    "name": "iPhone 15",
+    "category": "Phone",
+    "price": 999,
+    "stock": 15,
+    "tags": ["apple", "phone", "5g"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000001" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000005" },
+    "name": "Samsung Galaxy S24",
+    "category": "Phone",
+    "price": 849,
+    "stock": 10,
+    "tags": ["android", "phone", "5g"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000002" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000006" },
+    "name": "Google Pixel 8",
+    "category": "Phone",
+    "price": 699,
+    "stock": 6,
+    "tags": ["android", "phone", "camera"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000003" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000007" },
+    "name": "Wireless Mouse",
+    "category": "Accessory",
+    "price": 29,
+    "stock": 35,
+    "tags": ["wireless", "mouse", "portable"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000003" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000008" },
+    "name": "Mechanical Keyboard",
+    "category": "Accessory",
+    "price": 89,
+    "stock": 20,
+    "tags": ["keyboard", "mechanical", "gaming"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000003" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000009" },
+    "name": "USB-C Hub",
+    "category": "Accessory",
+    "price": 45,
+    "stock": 0,
+    "tags": ["usb", "portable", "laptop"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000001" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000010" },
+    "name": "27 Inch Monitor",
+    "category": "Accessory",
+    "price": 299,
+    "stock": 7,
+    "tags": ["monitor", "display", "office"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000002" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000011" },
+    "name": "Noise Cancelling Headphones",
+    "category": "Accessory",
+    "price": 159,
+    "stock": 9,
+    "tags": ["wireless", "audio", "portable"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000003" }
+  },
+  {
+    "_id": { "$oid": "651000000000000000000012" },
+    "name": "Laptop Backpack",
+    "category": "Accessory",
+    "price": 59,
+    "stock": 18,
+    "tags": ["bag", "laptop", "portable"],
+    "isActive": true,
+    "supplier": { "$oid": "650000000000000000000001" }
+  }
+]
