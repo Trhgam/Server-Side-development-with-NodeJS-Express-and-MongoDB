@@ -13,7 +13,39 @@ async function getProducts(req, res, next) {
     next(err);
   }
 }
+async function createProducts(req, res, next) {
+  try {
+    // 1. Lấy dữ liệu từ form / body gửi lên
+    const body = {
+      title: req.body.title,
+    };
 
+    // 2. Thao tác lưu vào MongoDB (dùng .create() hoặc .insertOne())
+    await productModel.create(body);
+
+    // 3. Redirect về đường dẫn danh sách sản phẩm
+    res.redirect(303, "/products");
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function updateProduct(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { title } = req.body;
+
+    // Cập nhật sản phẩm theo id
+    await productModel.findByIdAndUpdate(id, { title });
+
+    // Redirect về trang danh sách sản phẩm
+    res.redirect("/products");
+  } catch (err) {
+    next(err);
+  }
+}
 module.exports = {
   getProducts,
+  createProducts,
+  updateProduct,
 };
