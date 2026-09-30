@@ -21,8 +21,11 @@ mongoose
 var app = express();
 app.set("port", process.env.PORT || 3000); //
 // view engine setup
+
+// khác với router path.join ko cần đi trong ra ngoài mà vào thẳng trực tiếp views
 app.set("views", path.join(__dirname, "views"));
-app.set("view engine", "jade");
+// Không dùng jade -> sửa lại dùng ejs
+app.set("view engine", "ejs");
 
 app.use(logger("dev"));
 app.use(express.json());
