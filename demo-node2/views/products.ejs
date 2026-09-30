@@ -1,10 +1,10 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Student Dashboard</title>
+
 
     <style>
       * {
@@ -167,55 +167,24 @@
 
     <main class="container">
       <section class="welcome-card">
-        <h2>Hello, Gấm 👋</h2>
-
-        <p>
-          Welcome back to your learning dashboard. Here is some information
-          about your current courses.
-        </p>
-
-        <div class="student-info">
-          <div class="info-box">
-            <span>Name</span>
-            <strong>Trần Hồng Gấm</strong>
-          </div>
-
-          <div class="info-box">
-            <span>Age</span>
-            <strong>21</strong>
-          </div>
-
-          <div class="info-box">
-            <span>Status</span>
-            <strong>Active Student</strong>
-          </div>
-        </div>
-      </section>
-
-      <section class="subjects">
-        <h2>My Subjects</h2>
-
-        <div class="subject-list">
-          <div class="subject-card">
-            <h3>NodeJS</h3>
-            <p>Learn backend development using JavaScript.</p>
-          </div>
-
-          <div class="subject-card">
-            <h3>ExpressJS</h3>
-            <p>Build APIs and web applications with Express.</p>
-          </div>
-
-          <div class="subject-card">
-            <h3>EJS</h3>
-            <p>Render dynamic HTML pages from server-side data.</p>
-          </div>
-
-          <div class="subject-card">
-            <h3>MongoDB</h3>
-            <p>Store and manage application data using NoSQL.</p>
-          </div>
-        </div>
+        <h1 >Products</h1>
+        <!-- các lệnh lập trình phải nằm trong dấu <%%> -->
+          <% if(!products.length){
+              %>
+                <h1>Data not found</h1>
+              <%
+              } else {
+              %>
+                <div class="subject-list">
+                  <% products.forEach((product) => { %>
+                    <div class="subject-card">
+                      <h3><%= product.title %></h3>
+                    </div>
+                  <% }) %>
+                </div>
+              <%
+              }
+              %>
       </section>
     </main>
 

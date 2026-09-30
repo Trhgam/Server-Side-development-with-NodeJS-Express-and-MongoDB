@@ -5,8 +5,8 @@ var cookieParser = require("cookie-parser");
 var logger = require("morgan");
 
 var indexRouter = require("./routes/index");
-var usersRouter = require("./routes/users");
-var postsRouter = require("./routes/posts");
+// var usersRouter = require("./routes/users");
+// var postsRouter = require("./routes/posts");
 require("dotenv").config(); // this is required
 
 const mongoose = require("mongoose"); // import mongoose to use it for database connection
@@ -34,8 +34,8 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use("/", indexRouter);
-app.use("/users", usersRouter);
-app.use("/posts", postsRouter); //
+// app.use("/users", usersRouter);
+// app.use("/posts", postsRouter); //
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {
   next(createError(404));
