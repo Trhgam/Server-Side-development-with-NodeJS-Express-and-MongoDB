@@ -23,8 +23,10 @@ app.set("port", process.env.PORT || 3000); //
 // view engine setup
 
 // khác với router path.join ko cần đi trong ra ngoài mà vào thẳng trực tiếp views
+// "Express, khi tao gọi res.render(), hãy đi tìm template trong folder views.";
 app.set("views", path.join(__dirname, "views"));
 // Không dùng jade -> sửa lại dùng ejs
+// "Các template của tao sử dụng EJS. Nếu tao không ghi extension thì hiểu là .ejs.";
 app.set("view engine", "ejs");
 
 app.use(logger("dev"));

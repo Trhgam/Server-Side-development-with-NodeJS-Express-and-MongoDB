@@ -121,7 +121,7 @@ export const getProductById = async (req, res, next) => {
 
 export const createProduct = async (req, res, next) => {
   try {
-    const { name, price, category, tags, supplier } = req.body;
+    const { name, price, category, stock, tags, isActive, supplier } = req.body;
 
     if (supplier && !mongoose.Types.ObjectId.isValid(supplier)) {
       return res.status(400).json({ message: "Invalid Supplier ID format" });
@@ -131,7 +131,9 @@ export const createProduct = async (req, res, next) => {
       name,
       price,
       category,
+      stock: stock !== undefined ? Number(stock) : 0,
       tags,
+      isActive: isActive !== undefined ? isActive : true,
       supplier,
     });
 

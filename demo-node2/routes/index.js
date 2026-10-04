@@ -2,11 +2,11 @@ var express = require("express");
 var router = express.Router();
 var usersRouter = require("./users");
 var postsRouter = require("./posts");
-const products = require("./products");
+const productsRouter = require("./products");
 
 router.use("/users", usersRouter);
-router.use("/posts", postsRouter); //
-router.use("/products", products); //
+router.use("/posts", postsRouter);
+router.use("/products", productsRouter);
 
 /* GET home page. */
 router.get("", function (req, res, next) {
