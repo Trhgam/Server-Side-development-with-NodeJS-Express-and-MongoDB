@@ -10,7 +10,7 @@ import { requireLogin } from "../middlewares/auth.js";
 
 const router = express.Router();
 
-router.use(requireLogin);
+// router.use(requireLogin);
 
 router.get("/", getAdminProducts);
 router.post("/create", postCreateProduct);
