@@ -8,7 +8,8 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import session from "express-session";
 import Manager from "./models/managers.js";
-
+import passport from "passport";
+import "./config/passport.js"; // import để khởi tạo passport
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -46,14 +47,23 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(
   session({
-    secret: "sdn302_lab02",
+    secret: "sdn302_lab02", // đi thi sẽ trường kêu đặt gì thì đặt đó và có lêu env không
     resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 24 * 60 * 60 * 1000 },
+    cookie: {
+      httpOnly: true,
+      secure: false, // nếu là true thì chỉ cho phép gửi cookie qua https, còn false thì gửi qua http và https đều được
+      maxAge: 60 * 60 * 1000,
+    },
   }),
 );
 app.use(express.static(path.join(__dirname, "public")));
-
+app.use(passport.initialize()); // Khởi tạo Passport
+// phải khưởi tạo trước khi vào các router để nó
+// có thể kiểm tra xem người dùng đã đăng nhập hay chưa, nếu chưa thì nó sẽ redirect về trang đăng nhập
+// và có 1 số api sẽ public 1 số private thì nó
+//
+app.use(passport.session()); // Khởi tạo Passport session
 app.use("/", indexRouter);
 
 app.use(function (req, res, next) {

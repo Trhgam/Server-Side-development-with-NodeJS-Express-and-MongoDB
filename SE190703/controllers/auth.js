@@ -12,6 +12,14 @@ export const getLoginView = (req, res) => {
 
 export const postLogin = async (req, res) => {
   try {
+    if (req.user) {
+      req.session.manager = {
+        id: req.user._id,
+        code: req.user.code,
+      };
+      return res.redirect("/admin/products");
+    }
+
     const code = (req.body.code || "").trim();
     const password = (req.body.password || req.body.pass || "").trim();
 
