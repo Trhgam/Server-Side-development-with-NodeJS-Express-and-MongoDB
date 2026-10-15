@@ -55,3 +55,11 @@ app.use(function (err, req, res, next) {
 });
 
 module.exports = app;
+
+
+
+// Passport 
+// Local          npm i passport-local --save
+// OpenID Connect
+// OAuth-based strategies
+

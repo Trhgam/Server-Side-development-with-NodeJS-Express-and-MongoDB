@@ -1,0 +1,20 @@
+[
+  {
+    "_id": { "$oid": "650000000000000000000001" },
+    "name": "Tech Source Vietnam",
+    "email": "contact@techsource.vn",
+    "phone": "0901000001"
+  },
+  {
+    "_id": { "$oid": "650000000000000000000002" },
+    "name": "Digital World Supplier",
+    "email": "sales@digitalworld.vn",
+    "phone": "0901000002"
+  },
+  {
+    "_id": { "$oid": "650000000000000000000003" },
+    "name": "Smart Gadget Distribution",
+    "email": "hello@smartgadget.vn",
+    "phone": "0901000003"
+  }
+]

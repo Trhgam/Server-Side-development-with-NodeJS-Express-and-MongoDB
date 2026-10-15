@@ -1,0 +1,9 @@
+[
+  {
+    "_id": {
+      "$oid": "652000000000000000000001"
+    },
+    "code": "MGR001",
+    "pass": "$2b$10$e0XAQ4SKIXwqwY4/MZaXE.re/ucuW8tbn8tmCHSWEpdXfPuCi7oPq"
+  }
+]
