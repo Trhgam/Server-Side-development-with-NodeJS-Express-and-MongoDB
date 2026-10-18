@@ -8,7 +8,13 @@ var indexRouter = require("./routes/index");
 // var usersRouter = require("./routes/users");
 // var postsRouter = require("./routes/posts");
 require("dotenv").config(); // this is required
-
+const cors = require("cors");
+// trong thực tế phải config để cho origin nào có thể access domain nào vô
+const corsOptions = {
+  origin: ["http://localhost:5173", "http://localhost:5174"],
+  optionsSuccessStatus: 200, // cho trình duyệt cũ
+  allowHeaders: ["Content-Type", "Authorization"], // cho phép header Authorization hoặc ko 
+};
 const mongoose = require("mongoose"); // import mongoose to use it for database connection
 //tạo connection
 mongoose
@@ -28,7 +34,7 @@ app.set("views", path.join(__dirname, "views"));
 // Không dùng jade -> sửa lại dùng ejs
 // "Các template của tao sử dụng EJS. Nếu tao không ghi extension thì hiểu là .ejs.";
 app.set("view engine", "ejs");
-
+app.use(cors(corsOptions));
 app.use(logger("dev"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
@@ -56,10 +62,7 @@ app.use(function (err, req, res, next) {
 
 module.exports = app;
 
-
-
-// Passport 
+// Passport
 // Local          npm i passport-local --save
 // OpenID Connect
 // OAuth-based strategies
-
