@@ -1,0 +1,137 @@
+Css
+/* reset css*/
+*{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+html{
+    font-size: 62.5%;
+    font-family: sans-serif;
+}
+body{
+    font-size: 1.6rem;
+}
+.container{
+    border: 1px solid black; 
+    max-width: 1320px;
+    margin: 0 auto;
+}
+
+============================================================
+  flex-direction: column;
+    justify-content: space-between;
+    flex-grow: 1;
+=============================================================
+Block : blue + green + yellow + orange. hết dòng
+Inline-block : blue + green + yellow + orange. chỉ bao vừa content của nó
+Inline : blue + green
+font-style italic in nghieng
+#thẻ p 
+p:nth-child(odd){
+         color:aqua
+}
+style="display: none;" - color background
+i: italic : nghiêng | em : emphasized : nhấn mạnh 
+    b: bold : in đậm    | strong : mạnh 
+    mark : đánh dấu hight light
+    small : làm cho từ nào đó nhỏ lại
+    sub : số H20,cho kí tự thụt xuống
+    sup : số mũ, cho kí tự nhích lên
+
+#thẻ table 
+.Table {
+    border-collapse: collapse; /* Thêm thuộc tính \này */
+    }
+    .Table th,td{
+            border: 1px solid black;
+            border-collapse: collapse;
+ }
+
+style="border-radius: 5px; " bo tròn góc
+form label{
+	fontsize ...px
+	margin-bottom : ..px
+}
+flex-flow:1 ; dãn các box trong 1 flexbox
+text-align : center ;
+box-sizing : border-box --> padd /border
+
+xuống hàng nằm giữa thì justify-content:center
+muốn nó di chuyển khi màn nhỏ thì flex-wrap
+
+.card_comtroler_block{
+	width: 50%
+}
+//làm cạc block
+.btn_card_comtroler{
+	display: block;/
+	width : 100% 
+	background-color:teal;
+	color :white
+	height:3rem
+	
+}
+cách đánh ra giữa : dùng flex hoặc margin ,padding
+khi có 2 display flex ưu tiên đánh flex ở lớp cuối cùng
+xử lý viền giữa 2 nút
+with : calc(50% - 1px) ở div bọc nút đó
+sau đó dùng flex justify-content: space-between
+============================================================================
+ LÝ THUYẾT : POSITION 
+=============================================================================
+#position:
++ static : ko dịch chuyển được,là  các thể mặc định
++ relative : hồn canh theo xác 
+div{
+position : relative;
+top : 2rem;
+left 2 rem; } chạy xuống 2rem so với div chứa nó ,tự canh chỉnh với nó ở static
++ absolute :  canh chỉnh theo cha ,cha phải khác static,hoặc muốn nó canh chỉnh theo gì thì biến cái đó thành relative
+div{
+position :  absolute;
+top 50% left 50%
+transform : translate(-50%,-50%)
+}
+lưu ý combo ra giữa
+muốn ra giữa thì phải so thê, với chính nó
+c1 : dùng relative(cha) + absolute(div muốn đánh ra giữa) 
+c2 : dùng flex-box 
+có thể dùng z-index cho nó ra tầng sau hay trước z-index : 999/-1
++fixed : ôm theo màn hình  vĩnh viễn 
++sticky : dòng chữ đầu trang,to đùng đùng ,dùng làm menu đầu trang 
+.div{
+	position :sticky;
+	top 1rem;
+}
+
+pseudo tag : span div
+pseudo class : :hover|:active |:unvisited | :focus
+pseudo element : ::before | ::after ko sờ được nhưng vẫn hiện,tạo hiệu ứng 
+
+@media (max-width: 600px) {
+  .container {
+    flex-direction: column; /* Đổi hướng xếp chồng thành cột */
+  }
+======================================================================================
+CANH CHỈNH CHO MỌI MÀN HÌNH
+
+======================================================================================
+
+
+box-shadow
+bold 700
+bolder 900
+list-style-type: square; ul li
+
+@block: thẻ mà chiếm trọn 1 hàng,ko có thẻ nào có thể cùng hàng với nó đc 
+ví dụ block : div ,h1
+@inline-block:thẻ mà có khối chỉ bao gồm content mà thôi tức là nó ko cố gắng chiếm hết dòng mà chỉ chiếm đủ block của content nó có mà thôi.inline block là 1 hộp ôm sát nên ko có sang trái phải được
+block sang trái phải được vì nó là 1 cái hộp rỗng lớn ,ko ôm 
+có skill có thể cho phép inline-block ra giữa đó là lồng trong thẻ div
+inline (ko phải inline block hay block nha, ko có màu cam,ko có bọc viền)
+tag formating: display : inline chỉ có nội dung content thôi,chỉ có màu xanh và ko có hộp block
+ví dụ inline span,em
+vid dụ inline-block img input button select text
+inline-block là loại thẻ "có khối chỉ bao gồm content mà thôi", "không cố gắng chiếm hết dòng" và "có thể lồng thẻ div để ra giữa".
+

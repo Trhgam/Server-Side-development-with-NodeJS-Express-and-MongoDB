@@ -1,0 +1,34 @@
+Schema : mô tả obj có những gì
+Student{
+	id :ObjectID,
+	name :String,
+	age: number,
+}
+
+interface | type
+interface chỉ để định nghĩa thuần túy kế thừa, mô tả,
+
+Vì interface có cơ chế decoration matching
+hacker vẫn thêm nhưng mk dùng bộ cờ để hạn chế bnos enumberavle ,có thể mở rộng têmn = khai báo lại nhưng tưởng nguy hiểm but not danger
+
+còn type ko có decoration matching mà dùng union | & , toàn thì ko cản đc
+
+
+type chỉ dùng định nghĩa data ng dùng đưa thôi chứ ko nên dùng để mô tả 1 bi cái gì
+
+lookup ~ join
+
+JWT 
+header 
+iat mã mã hóa (ngày hết hạn giúp ép logout và có thể thu hồi quyền truy cập khi bị hack)
+mã chỉ mình biết(mã mình đã ký) cất trong file .env
+
+có xu hướng mã hóa cục ban đầu + chữ ký
+
+
+----------------------------------------
+
+handler ( middlewares | controller )
+middlewares : mafw owr giwuxa quas trinhf xuwr lys neen buoojc nos ngoaif res vafres thif phair cos next nha 
+
+middware có thể đặt ở bki đâu 

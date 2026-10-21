@@ -3,7 +3,8 @@ var express = require("express");
 var path = require("path");
 var cookieParser = require("cookie-parser");
 var logger = require("morgan");
-const uploadRouter = require("./routes/upload")
+const uploadRouter = require("./routes/upload");
+const downloadRouter = require("./routes/download");
 var indexRouter = require("./routes/index");
 // var usersRouter = require("./routes/users");
 // var postsRouter = require("./routes/posts");
@@ -13,7 +14,7 @@ const cors = require("cors");
 const corsOptions = {
   origin: ["http://localhost:5173", "http://localhost:5174"],
   optionsSuccessStatus: 200, // cho trình duyệt cũ
-  allowHeaders: ["Content-Type", "Authorization"], // cho phép header Authorization hoặc ko 
+  allowHeaders: ["Content-Type", "Authorization"], // cho phép header Authorization hoặc ko
 };
 const mongoose = require("mongoose"); // import mongoose to use it for database connection
 //tạo connection
@@ -40,7 +41,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
-app.use("/download", uploadRouter);
+app.use("/upload", uploadRouter);
+app.use("/download", downloadRouter);
 app.use("/", indexRouter);
 // app.use("/users", usersRouter);
 // app.use("/posts", postsRouter); //

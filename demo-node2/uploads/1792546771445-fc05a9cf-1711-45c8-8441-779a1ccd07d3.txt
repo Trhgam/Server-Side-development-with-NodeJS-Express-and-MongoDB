@@ -1,0 +1,78 @@
+Window E : mở explorer
+P : theo quy luật bình thường => ngắt dòng
+
+
+ngôn ngữ truy vấn có cấu trúc 
+học cách đặt câu hỏi làm sao cho người khác dễ tìm?
+các câu trả lời thường xuất hiện dưới dạng câu hỏi
+
+cở sở dữ liệu đã có cấu trúc ,đặt câu hỏi dựa trên cấu trúc đó
+
+
+frontend : giao diện
+html css js
+	bootstrap
+nodejs scss TS
+react angular vuejs
+
+backend : 
+c java c# js 
+java spring 
+c#.net asp
+nodejs + expressJs
+nestetd js nextjs fastify
+
+DBI: 
+SQL , mongoDB, GraphQL
+
+cung cấp bởi ai đó 
+depentdency injection design pattern , module design pattern khác nhau gì 
+
+NodeJS singleton pattern  React 
+	Observer Pattern  Angular
+			  Vuajs
+
+
+
+SQL
+DDL: DATA DEFINITION LANGUAGE
+database - table
+ngôn  ngứ định nghĩa ( kiến tạo )
+CREATE
+RENAME đổi tên khi 
+ALTER
+DROP warning
+ 
+DML data manipulation language 
+ngôn ngữ thao tác dữ liệu 
+table - data
+INSERT SELECT UPDATE DELETE_WARNING X3 
+DELETE table chỉ làm mất data thôi,
+nhưng nguy hiểm vì nó nhỏ và dễ xóa
+nó sẽ lập tức xóa trong im lặng,và mk ko biết
+
+DCL: Data Control Language
+ngôn ngữ kiếm soát
+GRANT tạo ra chìa khóa đưa ai đó cấp quyền 
+REVOKE lấy lại chìa khóa , lấy lại quyền
+
+DDOS Tấn công từ chối dịch vụ 
+
+Lê Hữu Việt Anh
+
+@media 2 vật thể 100%
+
+
+JS Typecsript meterial UI
+
+MUI 
+daisy ui 
+Jira agile
+Golang
+CI/CD
+AWS
+
+
+Học Typography
+UX UI
+

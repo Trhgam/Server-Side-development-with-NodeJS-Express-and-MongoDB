@@ -1,0 +1,48 @@
+env : nơi để pass ,=> ko đc push lên git
+
+editorconfig => nút tab
+bot dist vo editorignore
+gitignoe => lưu node_modules package-lock env
+
+npm init -y
+
+
+shoppingCart
+name: lehodiep1999
+pwd : piedTeam
+
+
+
+redis
+tan cong xss chen them ki tu vao req
+tan con the man in the middle
+
+
+UP25
+-==================================================
+
+Aggregate (hay Aggregation Framework) trong MongoDB
+
+checkSchema thuoc express-validator
+
+
+Cách để commit hay rollback transaction
+
+
+SHA256
+digest Hex
+
+
+
+Ready for the redirection  |  no installation : hot failover
+Ready for a full setup: cold backup
+Is running and ready for install: warm standby
+
+
+
+
+Pure function
+Side-effect
+đặc tính của C platform
+
+

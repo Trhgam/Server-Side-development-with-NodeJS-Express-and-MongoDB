@@ -6,6 +6,7 @@
 var app = require("../app");
 var debug = require("debug")("demo-node2:server");
 var https = require("https");
+var http = require("http");
 var fs = require("fs");
 var path = require("path");
 
@@ -27,7 +28,7 @@ var sslOptions = {
  * Create HTTPS server.
  */
 var server = https.createServer(sslOptions, app);
-
+// var server = http.createServer(app);
 /**
  * Listen on provided port.
  */
