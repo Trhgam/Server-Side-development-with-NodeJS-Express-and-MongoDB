@@ -3,7 +3,7 @@ var express = require("express");
 var path = require("path");
 var cookieParser = require("cookie-parser");
 var logger = require("morgan");
-
+const uploadRouter = require("./routes/upload")
 var indexRouter = require("./routes/index");
 // var usersRouter = require("./routes/users");
 // var postsRouter = require("./routes/posts");
@@ -40,7 +40,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
-
+app.use("/download", uploadRouter);
 app.use("/", indexRouter);
 // app.use("/users", usersRouter);
 // app.use("/posts", postsRouter); //
