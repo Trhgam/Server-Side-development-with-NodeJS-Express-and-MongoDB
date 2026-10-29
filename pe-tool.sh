@@ -758,13 +758,41 @@ function parseFields(fieldInput) {
     return fieldInput.map(f => {
       let rawType = f.type || inferType(f.name);
       let isImg = f.ui === 'image';
+      let isGender = f.ui === 'gender' || /^(gender|sex|ismale)$/i.test(f.name);
+      let isProg = f.ui === 'progress' || /progress|percent|percentage|completion/i.test(f.name);
+      let enumValues = Array.isArray(f.enumValues) ? f.enumValues : (Array.isArray(f.enum) ? f.enum : []);
+
       if (/^image$/i.test(rawType)) {
         rawType = 'String';
         isImg = true;
       } else if (/^\[image\]$/i.test(rawType)) {
         rawType = '[String]';
         isImg = true;
+      } else if (/^gender$/i.test(rawType)) {
+        rawType = 'Boolean';
+        isGender = true;
+      } else if (/^progress$/i.test(rawType)) {
+        rawType = 'Number';
+        isProg = true;
       }
+
+      if (isGender && enumValues.length === 0) {
+        enumValues = ['Male', 'Female'];
+      }
+
+      let ui = f.ui;
+      if (!ui) {
+        if (isImg) ui = 'image';
+        else if (isGender) ui = 'gender';
+        else if (isProg) ui = 'progress';
+        else if (enumValues.length > 0) ui = 'select';
+        else if (rawType === 'Boolean') ui = 'switch';
+        else if (rawType === 'Number') ui = 'number';
+        else if (rawType === 'Date') ui = 'date';
+        else if (rawType === '[String]') ui = 'comma-list';
+        else ui = 'text';
+      }
+
       return {
         name: f.name,
         type: rawType,
@@ -773,7 +801,8 @@ function parseFields(fieldInput) {
         min: f.min !== undefined && f.min !== '' ? f.min : '',
         max: f.max !== undefined && f.max !== '' ? f.max : '',
         defaultValue: f.defaultValue !== undefined ? f.defaultValue : '',
-        ui: isImg ? 'image' : (f.ui || (rawType === 'Boolean' ? 'switch' : (rawType === 'Number' ? 'number' : (rawType === 'Date' ? 'date' : (rawType === '[String]' ? 'comma-list' : 'text'))))),
+        enumValues,
+        ui,
         displayField: f.displayField || '',
         label: f.label || capitalize(f.name)
       };
@@ -785,12 +814,60 @@ function parseFields(fieldInput) {
       if (Array.isArray(arr)) return parseFields(arr);
     } catch (e) {}
   }
-  const parts = String(fieldInput).split(',').map(p => p.trim()).filter(Boolean);
+
+  function splitDslParts(strInput) {
+    const parts = [];
+    let current = '';
+    let inEnum = false;
+    let inBracket = 0;
+    const str = String(strInput || '');
+
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      if (ch === '[') inBracket++;
+      else if (ch === ']') inBracket--;
+      else if (str.slice(i, i + 5).toLowerCase() === 'enum=') inEnum = true;
+      else if (ch === ':') inEnum = false;
+
+      if (ch === ',' && inBracket === 0) {
+        if (inEnum) {
+          const remainder = str.slice(i + 1);
+          const nextComma = remainder.indexOf(',');
+          const firstSegment = (nextComma !== -1 ? remainder.slice(0, nextComma) : remainder).trim();
+          const colIdx = firstSegment.indexOf(':');
+          let isNewField = false;
+          if (colIdx !== -1) {
+            const after = firstSegment.slice(colIdx + 1).trim().toLowerCase();
+            if (!/^(ui|req|unique|min|max|default|enum|options)=?/.test(after)) {
+              isNewField = true;
+            }
+          }
+          if (!isNewField) {
+            current += ch;
+            continue;
+          }
+          inEnum = false;
+        }
+        parts.push(current.trim());
+        current = '';
+        continue;
+      }
+      current += ch;
+    }
+    if (current.trim()) parts.push(current.trim());
+    return parts.filter(Boolean);
+  }
+
+  const parts = splitDslParts(fieldInput);
   return parts.map((part, index) => {
     const tokens = part.split(':').map(t => t.trim());
     const name = tokens[0];
     let rawType = tokens[1] || inferType(name);
     let isImg = false;
+    let isGender = false;
+    let isProg = false;
+    let enumValues = [];
+    let uiExplicit = '';
 
     if (/^image$/i.test(rawType)) {
       rawType = 'String';
@@ -798,16 +875,57 @@ function parseFields(fieldInput) {
     } else if (/^\[image\]$/i.test(rawType)) {
       rawType = '[String]';
       isImg = true;
+    } else if (/^gender$/i.test(rawType)) {
+      rawType = 'Boolean';
+      isGender = true;
+    } else if (/^progress$/i.test(rawType)) {
+      rawType = 'Number';
+      isProg = true;
     }
 
-    const flags = tokens.slice(2).map(t => t.toLowerCase());
-    if (flags.includes('image') || flags.includes('img') || flags.some(t => t.startsWith('ui=image'))) {
-      isImg = true;
-    }
+    const flags = tokens.slice(2);
+    flags.forEach(flag => {
+      const fLower = flag.toLowerCase();
+      if (fLower === 'image' || fLower === 'img' || fLower.startsWith('ui=image')) {
+        isImg = true;
+      } else if (fLower === 'gender' || fLower.startsWith('ui=gender')) {
+        isGender = true;
+      } else if (fLower === 'progress' || fLower.startsWith('ui=progress')) {
+        isProg = true;
+      } else if (fLower.startsWith('ui=')) {
+        uiExplicit = flag.split('=')[1].trim();
+      } else if (/^(enum|options|values)=/i.test(flag)) {
+        const valStr = flag.replace(/^(enum|options|values)=/i, '');
+        enumValues = valStr.split('|').length > 1 ? valStr.split('|').map(v => v.trim()) : valStr.split(/[\/,;]/).map(v => v.trim()).filter(Boolean);
+      }
+    });
 
+    const flagsLower = flags.map(t => t.toLowerCase());
     const type = rawType.startsWith('[') ? rawType : (rawType.charAt(0).toUpperCase() + rawType.slice(1));
-    const isReq = flags.includes('req') || flags.includes('required') || (index === 0);
-    const isUnique = flags.includes('unique');
+    const isReq = flagsLower.includes('req') || flagsLower.includes('required') || (index === 0);
+    const isUnique = flagsLower.includes('unique');
+
+    if (!isGender && type === 'Boolean' && /^(gender|sex|ismale)$/i.test(name)) {
+      isGender = true;
+    }
+    if (!isProg && type === 'Number' && /progress|percent|percentage|completion/i.test(name)) {
+      isProg = true;
+    }
+    if (isGender && enumValues.length === 0) {
+      enumValues = ['Male', 'Female'];
+    }
+
+    let ui = uiExplicit || 'text';
+    if (!uiExplicit) {
+      if (isImg) ui = 'image';
+      else if (isGender) ui = 'gender';
+      else if (isProg) ui = 'progress';
+      else if (enumValues.length > 0) ui = 'select';
+      else if (type === 'Boolean') ui = 'switch';
+      else if (type === 'Number') ui = 'number';
+      else if (type === 'Date') ui = 'date';
+      else if (type === '[String]') ui = 'comma-list';
+    }
 
     return {
       name,
@@ -817,7 +935,8 @@ function parseFields(fieldInput) {
       min: '',
       max: '',
       defaultValue: '',
-      ui: isImg ? 'image' : (type === 'Boolean' ? 'switch' : (type === 'Number' ? 'number' : (type === 'Date' ? 'date' : (type === '[String]' ? 'comma-list' : 'text')))),
+      enumValues,
+      ui,
       label: capitalize(name)
     };
   });
@@ -945,7 +1064,7 @@ const defaultPagePath = defaultEntity ? `/admin/${defaultEntity.col}` : '/';
 // -----------------------------------------------------------------------------
 
 // Manager Model with dynamic DSL fields
-let mgrExtraCode = extraMgrFields.map(f => {
+function generateSchemaFieldLines(f) {
   let typeStr = f.type === 'Number' ? 'Number' : f.type === 'Boolean' ? 'Boolean' : f.type === 'Date' ? 'Date' : (f.type === '[String]' || f.type === '[Image]') ? '[String]' : 'String';
   let lines = [`    type: ${typeStr}`, `    required: ${f.required ? 'true' : 'false'}`];
   if (typeStr === 'String') lines.push('    trim: true');
@@ -954,11 +1073,19 @@ let mgrExtraCode = extraMgrFields.map(f => {
   if (f.unique) lines.push('    unique: true');
   if (f.min !== undefined && f.min !== '') lines.push(`    min: ${f.min}`);
   if (f.max !== undefined && f.max !== '') lines.push(`    max: ${f.max}`);
+  if (f.enumValues && f.enumValues.length > 0 && typeStr === 'String') {
+    lines.push(`    enum: [${f.enumValues.map(v => `'${v}'`).join(', ')}]`);
+  }
   if (f.defaultValue !== undefined && f.defaultValue !== '') {
     lines.push(`    default: ${typeStr === 'String' ? `'${f.defaultValue}'` : f.defaultValue}`);
+  } else if (f.ui === 'gender' || ((f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name)) && (f.ui === 'radio' || f.ui === 'select'))) {
+    lines.push(`    default: true`);
   }
   return `  ${f.name}: {\n${lines.join(',\n')}\n  }`;
-}).join(',\n');
+}
+
+// Manager Model with dynamic DSL fields
+let mgrExtraCode = extraMgrFields.map(generateSchemaFieldLines).join(',\n');
 
 const mgrSchemaFields = `
   ${config.manager.userField}: {
@@ -986,20 +1113,7 @@ module.exports = mongoose.model('${capitalize(config.manager.name)}', schema);
 // Independent Models
 config.independentEntities.forEach(ent => {
   const fields = parseFields(ent.fields);
-  let fieldsCode = fields.map(f => {
-    let typeStr = f.type === 'Number' ? 'Number' : f.type === 'Boolean' ? 'Boolean' : f.type === 'Date' ? 'Date' : f.type === '[String]' ? '[String]' : 'String';
-    let lines = [`    type: ${typeStr}`, `    required: ${f.required ? 'true' : 'false'}`];
-    if (typeStr === 'String') lines.push('    trim: true');
-    if (f.lowercase) lines.push('    lowercase: true');
-    if (f.uppercase) lines.push('    uppercase: true');
-    if (f.unique) lines.push('    unique: true');
-    if (f.min !== undefined && f.min !== '') lines.push(`    min: ${f.min}`);
-    if (f.max !== undefined && f.max !== '') lines.push(`    max: ${f.max}`);
-    if (f.defaultValue !== undefined && f.defaultValue !== '') {
-      lines.push(`    default: ${f.type === 'String' ? `'${f.defaultValue}'` : f.defaultValue}`);
-    }
-    return `  ${f.name}: {\n${lines.join(',\n')}\n  }`;
-  }).join(',\n');
+  let fieldsCode = fields.map(generateSchemaFieldLines).join(',\n');
 
   fs.writeFileSync(`models/${ent.name}.js`, `const mongoose = require('mongoose');
 
@@ -1017,20 +1131,7 @@ module.exports = mongoose.model('${capitalize(ent.name)}', schema);
 // Dependent Models
 config.dependentEntities.forEach(ent => {
   const fields = parseFields(ent.fields);
-  let fieldsCode = fields.map(f => {
-    let typeStr = f.type === 'Number' ? 'Number' : f.type === 'Boolean' ? 'Boolean' : f.type === 'Date' ? 'Date' : f.type === '[String]' ? '[String]' : 'String';
-    let lines = [`    type: ${typeStr}`, `    required: ${f.required ? 'true' : 'false'}`];
-    if (typeStr === 'String') lines.push('    trim: true');
-    if (f.lowercase) lines.push('    lowercase: true');
-    if (f.uppercase) lines.push('    uppercase: true');
-    if (f.unique) lines.push('    unique: true');
-    if (f.min !== undefined && f.min !== '') lines.push(`    min: ${f.min}`);
-    if (f.max !== undefined && f.max !== '') lines.push(`    max: ${f.max}`);
-    if (f.defaultValue !== undefined && f.defaultValue !== '') {
-      lines.push(`    default: ${f.type === 'String' ? `'${f.defaultValue}'` : f.defaultValue}`);
-    }
-    return `  ${f.name}: {\n${lines.join(',\n')}\n  }`;
-  }).join(',\n');
+  let fieldsCode = fields.map(generateSchemaFieldLines).join(',\n');
 
   if (ent.references && ent.references.length > 0) {
     const refCodes = ent.references.map(r => `  ${r.fieldName}: {
@@ -2173,113 +2274,208 @@ allEntities.forEach(ent => {
   let addInputs = '';
   let editInputs = '';
 
-  const dynamicInputs = fieldsList.map(f => {
-      const isProg = f.name.toLowerCase().includes('progress');
-      const minAttr = f.min !== undefined && f.min !== '' ? `min="${f.min}"` : '';
-      const maxAttr = f.max !== undefined && f.max !== '' ? `max="${f.max}"` : '';
-      const rangeAttr = isProg ? 'min="0" max="1"' : `${minAttr} ${maxAttr}`.trim();
+  function generateAddInput(f, entName) {
+    const isProg = f.ui === 'progress' || f.name.toLowerCase().includes('progress');
+    const minAttr = f.min !== undefined && f.min !== '' ? `min="${f.min}"` : '';
+    const maxAttr = f.max !== undefined && f.max !== '' ? `max="${f.max}"` : '';
+    const rangeAttr = isProg ? 'min="0" max="1" step="0.05"' : `${minAttr} ${maxAttr}`.trim();
 
-      if (f.ui === 'switch' || (f.type === 'Boolean' && f.ui !== 'checkbox')) {
-        return `<div class="mb-3 form-check form-switch">
-            <input type="checkbox" role="switch" name="${f.name}" class="form-check-input" id="add-${ent.name}-${f.name}" value="true" ${f.defaultValue === 'true' || f.defaultValue === true ? 'checked' : ''}>
-            <label class="form-check-label fw-semibold" for="add-${ent.name}-${f.name}">${f.label}</label>
-          </div>`;
-      } else if (f.ui === 'checkbox' || f.type === 'Boolean') {
-        return `<div class="mb-3 form-check">
-            <input type="checkbox" name="${f.name}" class="form-check-input" id="add-${ent.name}-${f.name}" value="true" ${f.defaultValue === 'true' || f.defaultValue === true ? 'checked' : ''}>
-            <label class="form-check-label fw-semibold" for="add-${ent.name}-${f.name}">${f.label}</label>
-          </div>`;
-      } else if (f.ui === 'textarea') {
+    if (f.ui === 'radio') {
+      const isGenderRadio = f.ui === 'gender' || f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name);
+      if (isGenderRadio) {
         return `<div class="mb-3">
+            <label class="form-label fw-semibold d-block">${f.label}</label>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="${f.name}" id="add-${entName}-${f.name}-true" value="true" checked>
+              <label class="form-check-label" for="add-${entName}-${f.name}-true">Male</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="${f.name}" id="add-${entName}-${f.name}-false" value="false">
+              <label class="form-check-label" for="add-${entName}-${f.name}-false">Female</label>
+            </div>
+          </div>`;
+      } else if (f.enumValues && f.enumValues.length > 0) {
+        return `<div class="mb-3">
+            <label class="form-label fw-semibold d-block">${f.label}</label>
+            ${f.enumValues.map((opt, idx) => `
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="${f.name}" id="add-${entName}-${f.name}-${idx}" value="${opt}" ${idx === 0 ? 'checked' : ''} ${f.required ? 'required' : ''}>
+              <label class="form-check-label" for="add-${entName}-${f.name}-${idx}">${opt}</label>
+            </div>`).join('')}
+          </div>`;
+      }
+    }
+
+    if (f.ui === 'gender') {
+      return `<div class="mb-3">
+            <label class="form-label fw-semibold">${f.label}</label>
+            <select name="${f.name}" class="form-select">
+              <option value="true" selected>Male</option>
+              <option value="false">Female</option>
+            </select>
+          </div>`;
+    }
+
+    if (f.ui === 'select' || (f.enumValues && f.enumValues.length > 0)) {
+      const optionsHtml = (f.enumValues || []).map(opt => `<option value="${opt}">${opt}</option>`).join('\n              ');
+      return `<div class="mb-3">
+            <label class="form-label fw-semibold">${f.label}</label>
+            <select name="${f.name}" class="form-select" ${f.required ? 'required' : ''}>
+              ${optionsHtml}
+            </select>
+          </div>`;
+    }
+
+    if (f.ui === 'switch' || (f.type === 'Boolean' && f.ui !== 'checkbox')) {
+      return `<div class="mb-3 form-check form-switch">
+            <input type="checkbox" role="switch" name="${f.name}" class="form-check-input" id="add-${entName}-${f.name}" value="true" ${f.defaultValue === 'true' || f.defaultValue === true ? 'checked' : ''}>
+            <label class="form-check-label fw-semibold" for="add-${entName}-${f.name}">${f.label}</label>
+          </div>`;
+    } else if (f.ui === 'checkbox' || f.type === 'Boolean') {
+      return `<div class="mb-3 form-check">
+            <input type="checkbox" name="${f.name}" class="form-check-input" id="add-${entName}-${f.name}" value="true" ${f.defaultValue === 'true' || f.defaultValue === true ? 'checked' : ''}>
+            <label class="form-check-label fw-semibold" for="add-${entName}-${f.name}">${f.label}</label>
+          </div>`;
+    } else if (f.ui === 'textarea') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <textarea name="${f.name}" class="form-control" rows="3" placeholder="Enter ${f.label}" ${f.required ? 'required' : ''}></textarea>
           </div>`;
-      } else if (f.ui === 'url' || f.ui === 'image' || f.type === 'Image') {
-        return `<div class="mb-3">
+    } else if (f.ui === 'url' || f.ui === 'image' || f.type === 'Image') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <input type="url" name="${f.name}" class="form-control" placeholder="https://example.com/image.jpg" ${f.required ? 'required' : ''}>
           </div>`;
-      } else if (f.ui === 'password') {
-        return `<div class="mb-3">
+    } else if (f.ui === 'password') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <input type="password" name="${f.name}" class="form-control" placeholder="Enter ${f.label}" ${f.required ? 'required' : ''}>
           </div>`;
-      } else if (f.ui === 'comma-list' || f.type === '[String]' || f.type === '[Image]') {
-        return `<div class="mb-3">
+    } else if (f.ui === 'comma-list' || f.type === '[String]' || f.type === '[Image]') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label} (comma-separated list)</label>
             <input type="text" name="${f.name}" class="form-control" placeholder="item1, item2, item3" ${f.required ? 'required' : ''}>
           </div>`;
-      } else if (f.ui === 'number' || f.type === 'Number') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}${isProg ? ' (0 - 1)' : ''}</label>
-            <input type="number" step="any" ${rangeAttr} name="${f.name}" class="form-control" placeholder="Enter ${f.label}" ${f.required ? 'required' : ''}>
+    } else if (f.ui === 'number' || f.type === 'Number') {
+      return `<div class="mb-3">
+            <label class="form-label fw-semibold">${f.label}${isProg ? ' (0.0 - 1.0 or %)' : ''}</label>
+            <input type="number" step="any" ${rangeAttr} name="${f.name}" class="form-control" placeholder="${isProg ? 'e.g. 0.8' : 'Enter ' + f.label}" ${f.required ? 'required' : ''}>
           </div>`;
-      } else if (f.ui === 'date' || f.type === 'Date') {
-        return `<div class="mb-3">
+    } else if (f.ui === 'date' || f.type === 'Date') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <input type="date" name="${f.name}" class="form-control" ${f.required ? 'required' : ''}>
           </div>`;
-      } else {
-        return `<div class="mb-3">
+    } else {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <input type="text" name="${f.name}" class="form-control" placeholder="Enter ${f.label}" ${f.defaultValue ? `value="${f.defaultValue}"` : ''} ${f.required ? 'required' : ''}>
           </div>`;
-      }
-    }).join('\n          ');
+    }
+  }
 
-    const dynamicEditInputs = fieldsList.map(f => {
-      const isProg = f.name.toLowerCase().includes('progress');
-      const minAttr = f.min !== undefined && f.min !== '' ? `min="${f.min}"` : '';
-      const maxAttr = f.max !== undefined && f.max !== '' ? `max="${f.max}"` : '';
-      const rangeAttr = isProg ? 'min="0" max="1"' : `${minAttr} ${maxAttr}`.trim();
+  function generateEditInput(f, entName) {
+    const isProg = f.ui === 'progress' || f.name.toLowerCase().includes('progress');
+    const minAttr = f.min !== undefined && f.min !== '' ? `min="${f.min}"` : '';
+    const maxAttr = f.max !== undefined && f.max !== '' ? `max="${f.max}"` : '';
+    const rangeAttr = isProg ? 'min="0" max="1" step="0.05"' : `${minAttr} ${maxAttr}`.trim();
 
-      if (f.ui === 'switch' || (f.type === 'Boolean' && f.ui !== 'checkbox')) {
-        return `<div class="mb-3 form-check form-switch">
-            <input type="checkbox" role="switch" name="${f.name}" class="form-check-input" id="edit-${ent.name}-${f.name}-{{this._id}}" value="true" {{#if this.${f.name}}}checked{{/if}}>
-            <label class="form-check-label fw-semibold" for="edit-${ent.name}-${f.name}-{{this._id}}">${f.label}</label>
-          </div>`;
-      } else if (f.ui === 'checkbox' || f.type === 'Boolean') {
-        return `<div class="mb-3 form-check">
-            <input type="checkbox" name="${f.name}" class="form-check-input" id="edit-${ent.name}-${f.name}-{{this._id}}" value="true" {{#if this.${f.name}}}checked{{/if}}>
-            <label class="form-check-label fw-semibold" for="edit-${ent.name}-${f.name}-{{this._id}}">${f.label}</label>
-          </div>`;
-      } else if (f.ui === 'textarea') {
+    if (f.ui === 'radio') {
+      const isGenderRadio = f.ui === 'gender' || f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name);
+      if (isGenderRadio) {
         return `<div class="mb-3">
+            <label class="form-label fw-semibold d-block">${f.label}</label>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="${f.name}" id="edit-${entName}-${f.name}-true-{{this._id}}" value="true" {{#if this.${f.name}}}checked{{/if}}>
+              <label class="form-check-label" for="edit-${entName}-${f.name}-true-{{this._id}}">Male</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="${f.name}" id="edit-${entName}-${f.name}-false-{{this._id}}" value="false" {{#unless this.${f.name}}}checked{{/unless}}>
+              <label class="form-check-label" for="edit-${entName}-${f.name}-false-{{this._id}}">Female</label>
+            </div>
+          </div>`;
+      } else if (f.enumValues && f.enumValues.length > 0) {
+        return `<div class="mb-3">
+            <label class="form-label fw-semibold d-block">${f.label}</label>
+            ${f.enumValues.map((opt, idx) => `
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="${f.name}" id="edit-${entName}-${f.name}-${idx}-{{this._id}}" value="${opt}" {{#if (eq this.${f.name} '${opt}')}}checked{{/if}} ${f.required ? 'required' : ''}>
+              <label class="form-check-label" for="edit-${entName}-${f.name}-${idx}-{{this._id}}">${opt}</label>
+            </div>`).join('')}
+          </div>`;
+      }
+    }
+
+    if (f.ui === 'gender') {
+      return `<div class="mb-3">
+            <label class="form-label fw-semibold">${f.label}</label>
+            <select name="${f.name}" class="form-select">
+              <option value="true" {{#if this.${f.name}}}selected{{/if}}>Male</option>
+              <option value="false" {{#unless this.${f.name}}}selected{{/unless}}>Female</option>
+            </select>
+          </div>`;
+    }
+
+    if (f.ui === 'select' || (f.enumValues && f.enumValues.length > 0)) {
+      const optionsHtml = (f.enumValues || []).map(opt => `<option value="${opt}" {{#if (eq this.${f.name} '${opt}')}}selected{{/if}}>${opt}</option>`).join('\n              ');
+      return `<div class="mb-3">
+            <label class="form-label fw-semibold">${f.label}</label>
+            <select name="${f.name}" class="form-select" ${f.required ? 'required' : ''}>
+              ${optionsHtml}
+            </select>
+          </div>`;
+    }
+
+    if (f.ui === 'switch' || (f.type === 'Boolean' && f.ui !== 'checkbox')) {
+      return `<div class="mb-3 form-check form-switch">
+            <input type="checkbox" role="switch" name="${f.name}" class="form-check-input" id="edit-${entName}-${f.name}-{{this._id}}" value="true" {{#if this.${f.name}}}checked{{/if}}>
+            <label class="form-check-label fw-semibold" for="edit-${entName}-${f.name}-{{this._id}}">${f.label}</label>
+          </div>`;
+    } else if (f.ui === 'checkbox' || f.type === 'Boolean') {
+      return `<div class="mb-3 form-check">
+            <input type="checkbox" name="${f.name}" class="form-check-input" id="edit-${entName}-${f.name}-{{this._id}}" value="true" {{#if this.${f.name}}}checked{{/if}}>
+            <label class="form-check-label fw-semibold" for="edit-${entName}-${f.name}-{{this._id}}">${f.label}</label>
+          </div>`;
+    } else if (f.ui === 'textarea') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <textarea name="${f.name}" class="form-control" rows="3" ${f.required ? 'required' : ''}>{{this.${f.name}}}</textarea>
           </div>`;
-      } else if (f.ui === 'url' || f.ui === 'image' || f.type === 'Image') {
-        return `<div class="mb-3">
+    } else if (f.ui === 'url' || f.ui === 'image' || f.type === 'Image') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <input type="url" name="${f.name}" class="form-control" value="{{this.${f.name}}}" placeholder="https://example.com/image.jpg" ${f.required ? 'required' : ''}>
           </div>`;
-      } else if (f.ui === 'password') {
-        return `<div class="mb-3">
+    } else if (f.ui === 'password') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <input type="password" name="${f.name}" class="form-control" placeholder="Leave blank to keep current">
           </div>`;
-      } else if (f.ui === 'comma-list' || f.type === '[String]' || f.type === '[Image]') {
-        return `<div class="mb-3">
+    } else if (f.ui === 'comma-list' || f.type === '[String]' || f.type === '[Image]') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label} (comma-separated list)</label>
             <input type="text" name="${f.name}" class="form-control" value="{{this.${f.name}}}" placeholder="item1, item2, item3" ${f.required ? 'required' : ''}>
           </div>`;
-      } else if (f.ui === 'number' || f.type === 'Number') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}${isProg ? ' (0 - 1)' : ''}</label>
+    } else if (f.ui === 'number' || f.type === 'Number') {
+      return `<div class="mb-3">
+            <label class="form-label fw-semibold">${f.label}${isProg ? ' (0.0 - 1.0 or %)' : ''}</label>
             <input type="number" step="any" ${rangeAttr} name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
           </div>`;
-      } else if (f.ui === 'date' || f.type === 'Date') {
-        return `<div class="mb-3">
+    } else if (f.ui === 'date' || f.type === 'Date') {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <input type="date" name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
           </div>`;
-      } else {
-        return `<div class="mb-3">
+    } else {
+      return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
             <input type="text" name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
           </div>`;
-      }
-    }).join('\n          ');
+    }
+  }
+
+  const dynamicInputs = fieldsList.map(f => generateAddInput(f, ent.name)).join('\n          ');
+  const dynamicEditInputs = fieldsList.map(f => generateEditInput(f, ent.name)).join('\n          ');
 
   if (ent.isManager) {
     addInputs = `<div class="mb-3">
@@ -2289,8 +2485,7 @@ allEntities.forEach(ent => {
           <div class="mb-3">
             <label class="form-label fw-semibold">Password</label>
             <input type="password" name="${config.manager.passField}" class="form-control" placeholder="Enter password" required>
-          </div>
-          ${dynamicInputs}`;
+          </div>` + (dynamicInputs ? '\n          ' + dynamicInputs : '');
 
     editInputs = `<div class="mb-3">
             <label class="form-label fw-semibold">${capitalize(config.manager.userField)}</label>
@@ -2299,118 +2494,10 @@ allEntities.forEach(ent => {
           <div class="mb-3">
             <label class="form-label fw-semibold">New Password (leave blank to keep current)</label>
             <input type="password" name="${config.manager.passField}" class="form-control" placeholder="New password">
-          </div>
-          ${dynamicEditInputs}`;
+          </div>` + (dynamicEditInputs ? '\n          ' + dynamicEditInputs : '');
   } else {
     addInputs = dynamicInputs;
     editInputs = dynamicEditInputs;
-    addInputs = fieldsList.map(f => {
-      const isProg = f.name.toLowerCase().includes('progress');
-      const minAttr = f.min !== undefined && f.min !== '' ? `min="${f.min}"` : '';
-      const maxAttr = f.max !== undefined && f.max !== '' ? `max="${f.max}"` : '';
-      const rangeAttr = isProg ? 'min="0" max="1"' : `${minAttr} ${maxAttr}`.trim();
-
-      if (f.ui === 'switch' || (f.type === 'Boolean' && f.ui !== 'checkbox')) {
-        return `<div class="mb-3 form-check form-switch">
-            <input type="checkbox" role="switch" name="${f.name}" class="form-check-input" id="add-${ent.name}-${f.name}" value="true" ${f.defaultValue === 'true' || f.defaultValue === true ? 'checked' : ''}>
-            <label class="form-check-label fw-semibold" for="add-${ent.name}-${f.name}">${f.label}</label>
-          </div>`;
-      } else if (f.ui === 'checkbox' || f.type === 'Boolean') {
-        return `<div class="mb-3 form-check">
-            <input type="checkbox" name="${f.name}" class="form-check-input" id="add-${ent.name}-${f.name}" value="true" ${f.defaultValue === 'true' || f.defaultValue === true ? 'checked' : ''}>
-            <label class="form-check-label fw-semibold" for="add-${ent.name}-${f.name}">${f.label}</label>
-          </div>`;
-      } else if (f.ui === 'textarea') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <textarea name="${f.name}" class="form-control" rows="3" placeholder="Enter ${f.label}" ${f.required ? 'required' : ''}></textarea>
-          </div>`;
-      } else if (f.ui === 'url') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <input type="url" name="${f.name}" class="form-control" placeholder="https://example.com" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else if (f.ui === 'password') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <input type="password" name="${f.name}" class="form-control" placeholder="Enter ${f.label}" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else if (f.ui === 'comma-list' || f.type === '[String]') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label} (comma-separated list)</label>
-            <input type="text" name="${f.name}" class="form-control" placeholder="item1, item2, item3" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else if (f.ui === 'number' || f.type === 'Number') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}${isProg ? ' (0 - 1)' : ''}</label>
-            <input type="number" step="any" ${rangeAttr} name="${f.name}" class="form-control" placeholder="Enter ${f.label}" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else if (f.ui === 'date' || f.type === 'Date') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <input type="date" name="${f.name}" class="form-control" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <input type="text" name="${f.name}" class="form-control" placeholder="Enter ${f.label}" ${f.required ? 'required' : ''}>
-          </div>`;
-      }
-    }).join('\n          ');
-
-    editInputs = fieldsList.map(f => {
-      const isProg = f.name.toLowerCase().includes('progress');
-      const minAttr = f.min !== undefined && f.min !== '' ? `min="${f.min}"` : '';
-      const maxAttr = f.max !== undefined && f.max !== '' ? `max="${f.max}"` : '';
-      const rangeAttr = isProg ? 'min="0" max="1"' : `${minAttr} ${maxAttr}`.trim();
-
-      if (f.ui === 'switch' || (f.type === 'Boolean' && f.ui !== 'checkbox')) {
-        return `<div class="mb-3 form-check form-switch">
-            <input type="checkbox" role="switch" name="${f.name}" class="form-check-input" id="edit-${ent.name}-${f.name}-{{this._id}}" value="true" {{#if this.${f.name}}}checked{{/if}}>
-            <label class="form-check-label fw-semibold" for="edit-${ent.name}-${f.name}-{{this._id}}">${f.label}</label>
-          </div>`;
-      } else if (f.ui === 'checkbox' || f.type === 'Boolean') {
-        return `<div class="mb-3 form-check">
-            <input type="checkbox" name="${f.name}" class="form-check-input" id="edit-${ent.name}-${f.name}-{{this._id}}" value="true" {{#if this.${f.name}}}checked{{/if}}>
-            <label class="form-check-label fw-semibold" for="edit-${ent.name}-${f.name}-{{this._id}}">${f.label}</label>
-          </div>`;
-      } else if (f.ui === 'textarea') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <textarea name="${f.name}" class="form-control" rows="3" ${f.required ? 'required' : ''}>{{this.${f.name}}}</textarea>
-          </div>`;
-      } else if (f.ui === 'url') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <input type="url" name="${f.name}" class="form-control" value="{{this.${f.name}}}" placeholder="https://example.com" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else if (f.ui === 'password') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <input type="password" name="${f.name}" class="form-control" placeholder="Leave blank to keep current">
-          </div>`;
-      } else if (f.ui === 'comma-list' || f.type === '[String]') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label} (comma-separated list)</label>
-            <input type="text" name="${f.name}" class="form-control" value="{{this.${f.name}}}" placeholder="item1, item2, item3" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else if (f.ui === 'number' || f.type === 'Number') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}${isProg ? ' (0 - 1)' : ''}</label>
-            <input type="number" step="any" ${rangeAttr} name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else if (f.ui === 'date' || f.type === 'Date') {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <input type="date" name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
-          </div>`;
-      } else {
-        return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}</label>
-            <input type="text" name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
-          </div>`;
-      }
-    }).join('\n          ');
 
     references.forEach(r => {
       const targetSingular = singularizeJs(r.targetEntity);
@@ -2542,6 +2629,30 @@ allEntities.forEach(ent => {
     cardBadges += `<span class="badge bg-info text-dark mb-2 me-1">{{this.${r.fieldName}.${disp}}}{{#unless this.${r.fieldName}.${disp}}}{{this.${r.fieldName}.userAlias}}{{this.${r.fieldName}.name}}{{this.${r.fieldName}.title}}{{this.${r.fieldName}.username}}{{/unless}}</span>`;
   });
 
+  fieldsList.forEach(f => {
+    const isGen = f.ui === 'gender' || ((f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name)) && (f.ui === 'radio' || f.ui === 'select'));
+    if (isGen) {
+      cardBadges += `{{#if this.${f.name}}}<span class="badge bg-primary mb-2 me-1">Male</span>{{else}}<span class="badge bg-danger mb-2 me-1">Female</span>{{/if}}`;
+    } else if (f.ui === 'select' || f.ui === 'radio' || (f.enumValues && f.enumValues.length > 0)) {
+      cardBadges += `{{#if this.${f.name}}}<span class="badge bg-secondary mb-2 me-1">{{this.${f.name}}}</span>{{/if}}`;
+    }
+  });
+
+  const progField = fieldsList.find(f => f.ui === 'progress' || f.name.toLowerCase().includes('progress'));
+  let cardProgressHtml = '';
+  if (progField) {
+    cardProgressHtml = `{{#if this.${progField.name}}}
+            <div class="mt-2">
+              <div class="d-flex justify-content-between small text-muted mb-1">
+                <span>${progField.label}</span>
+                <span class="fw-semibold">{{this.${progField.name}}}</span>
+              </div>
+              <div class="progress" style="height: 6px;">
+                <div class="progress-bar bg-success" style="width: calc({{this.${progField.name}}} * 100%);"></div>
+              </div>
+            </div>{{/if}}`;
+  }
+
   const isImageField = (f) => {
     if (!f) return false;
     return f.ui === 'image' || f.type === 'Image' || f.type === '[Image]' || /image|avatar|photo|thumb|poster|logo|banner/i.test(f.name || '');
@@ -2594,7 +2705,7 @@ allEntities.forEach(ent => {
           </div>
           ${cardBadges}
           {{#if this.description}}<p class="card-text text-muted small mt-2">{{this.description}}</p>{{/if}}
-          {{#if this.progress}}<div class="mt-2"><small class="text-muted">Progress: {{this.progress}}</small></div>{{/if}}
+          ${cardProgressHtml}
         </div>
         <div class="card-footer bg-transparent border-0 d-flex justify-content-between">
           <a href="${pagePath}/{{this._id}}" class="btn btn-sm btn-outline-primary">Details</a>
@@ -2652,6 +2763,33 @@ allEntities.forEach(ent => {
                   {{/if}}
                 </td>`;
       }
+    }
+    const isGen = f.ui === 'gender' || ((f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name)) && (f.ui === 'radio' || f.ui === 'select'));
+    if (isGen) {
+      return `<td>
+                {{#if this.${f.name}}}
+                  <span class="badge bg-primary">Male</span>
+                {{else}}
+                  <span class="badge bg-danger">Female</span>
+                {{/if}}
+              </td>`;
+    }
+    if (f.ui === 'progress') {
+      return `<td>
+                {{#if this.${f.name}}}
+                  <div class="d-flex align-items-center gap-2" style="min-width: 110px;">
+                    <div class="progress flex-grow-1" style="height: 6px;">
+                      <div class="progress-bar bg-success" style="width: calc({{this.${f.name}}} * 100%);"></div>
+                    </div>
+                    <small class="text-muted fw-semibold">{{this.${f.name}}}</small>
+                  </div>
+                {{else}}
+                  <span class="text-muted small">0</span>
+                {{/if}}
+              </td>`;
+    }
+    if (f.ui === 'select' || f.ui === 'radio' || (f.enumValues && f.enumValues.length > 0)) {
+      return `<td><span class="badge bg-secondary">{{this.${f.name}}}</span></td>`;
     }
     if (f.type === '[String]' || f.ui === 'comma-list') {
       return `<td class="text-truncate" style="max-width: 250px;" title="{{this.${f.name}}}">{{this.${f.name}}}</td>`;
@@ -2773,6 +2911,36 @@ allEntities.forEach(ent => {
           </div>
         </div>`;
       }
+    }
+    const isGen = f.ui === 'gender' || ((f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name)) && (f.ui === 'radio' || f.ui === 'select'));
+    if (isGen) {
+      return `<div class="mb-3">
+        <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
+        <div>
+          {{#if item.${f.name}}}
+            <span class="badge bg-primary fs-6">Male</span>
+          {{else}}
+            <span class="badge bg-danger fs-6">Female</span>
+          {{/if}}
+        </div>
+      </div>`;
+    }
+    if (f.ui === 'progress') {
+      return `<div class="mb-3">
+        <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
+        <div class="d-flex align-items-center gap-3 mt-1" style="max-width: 320px;">
+          <div class="progress flex-grow-1" style="height: 10px;">
+            <div class="progress-bar bg-success" style="width: calc({{item.${f.name}}} * 100%);"></div>
+          </div>
+          <span class="fw-bold fs-6">{{item.${f.name}}}</span>
+        </div>
+      </div>`;
+    }
+    if (f.ui === 'select' || f.ui === 'radio' || (f.enumValues && f.enumValues.length > 0)) {
+      return `<div class="mb-3">
+        <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
+        <div><span class="badge bg-secondary fs-6">{{item.${f.name}}}</span></div>
+      </div>`;
     }
     return `<div class="mb-3">
         <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
