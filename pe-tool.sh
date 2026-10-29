@@ -2550,19 +2550,24 @@ allEntities.forEach(ent => {
   const imgField = fieldsList.find(isImageField);
   let cardImageHtml = '';
   if (imgField) {
-    cardImageHtml = `{{#if this.${imgField.name}}}
+    const isArrayImg = imgField.type === '[Image]' || imgField.type === '[String]';
+    if (isArrayImg) {
+      cardImageHtml = `{{#if this.${imgField.name}}}
         <div style="height: {{@root.uiConfig.IMAGE.CARD.HEIGHT}}px; overflow: hidden; border-top-left-radius: 8px; border-top-right-radius: 8px;">
-          {{#if this.${imgField.name}.[0]}}
-            {{#each this.${imgField.name}}}
-              {{#if @first}}
-                <img src="{{this}}" class="card-img-top w-100 h-100" style="object-fit: {{@root.uiConfig.IMAGE.CARD.FIT}};" onerror="this.onerror=null;this.src='https://placehold.co/400x180?text=No+Image';">
-              {{/if}}
-            {{/each}}
-          {{else}}
-            <img src="{{this.${imgField.name}}}" class="card-img-top w-100 h-100" style="object-fit: {{@root.uiConfig.IMAGE.CARD.FIT}};" onerror="this.onerror=null;this.src='https://placehold.co/400x180?text=No+Image';">
-          {{/if}}
+          {{#each this.${imgField.name}}}
+            {{#if @first}}
+              <img src="{{this}}" class="card-img-top w-100 h-100" style="object-fit: {{@root.uiConfig.IMAGE.CARD.FIT}};" onerror="this.onerror=null;this.src='https://placehold.co/400x180?text=No+Image';">
+            {{/if}}
+          {{/each}}
         </div>
       {{/if}}`;
+    } else {
+      cardImageHtml = `{{#if this.${imgField.name}}}
+        <div style="height: {{@root.uiConfig.IMAGE.CARD.HEIGHT}}px; overflow: hidden; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+          <img src="{{this.${imgField.name}}}" class="card-img-top w-100 h-100" style="object-fit: {{@root.uiConfig.IMAGE.CARD.FIT}};" onerror="this.onerror=null;this.src='https://placehold.co/400x180?text=No+Image';">
+        </div>
+      {{/if}}`;
+    }
   }
 
   const cardsContent = `{{> header}}
@@ -2619,25 +2624,34 @@ allEntities.forEach(ent => {
   const dynamicTableCells = fieldsList.map(f => {
     const isImg = isImageField(f);
     if (isImg) {
-      return `<td>
-                {{#if this.${f.name}}}
-                  <div class="d-flex gap-1 flex-wrap align-items-center">
-                    {{#if this.${f.name}.[0]}}
+      const isArrayImg = f.type === '[Image]' || f.type === '[String]';
+      if (isArrayImg) {
+        return `<td>
+                  {{#if this.${f.name}}}
+                    <div class="d-flex gap-1 flex-wrap align-items-center">
                       {{#each this.${f.name}}}
                         <a href="{{this}}" target="_blank" title="View full image">
                           <img src="{{this}}" alt="${f.label}" class="table-img-thumb" style="width: {{@root.uiConfig.IMAGE.TABLE.WIDTH}}px; height: {{@root.uiConfig.IMAGE.TABLE.HEIGHT}}px; max-width: {{@root.uiConfig.IMAGE.TABLE.WIDTH}}px; max-height: {{@root.uiConfig.IMAGE.TABLE.HEIGHT}}px; object-fit: {{@root.uiConfig.IMAGE.TABLE.FIT}}; border-radius: {{@root.uiConfig.IMAGE.TABLE.BORDER_RADIUS}};" onerror="this.onerror=null;this.src='https://placehold.co/75x75?text=Img';">
                         </a>
                       {{/each}}
-                    {{else}}
+                    </div>
+                  {{else}}
+                    <span class="text-muted small">No image</span>
+                  {{/if}}
+                </td>`;
+      } else {
+        return `<td>
+                  {{#if this.${f.name}}}
+                    <div class="d-flex gap-1 flex-wrap align-items-center">
                       <a href="{{this.${f.name}}}" target="_blank" title="View full image">
                         <img src="{{this.${f.name}}}" alt="${f.label}" class="table-img-thumb" style="width: {{@root.uiConfig.IMAGE.TABLE.WIDTH}}px; height: {{@root.uiConfig.IMAGE.TABLE.HEIGHT}}px; max-width: {{@root.uiConfig.IMAGE.TABLE.WIDTH}}px; max-height: {{@root.uiConfig.IMAGE.TABLE.HEIGHT}}px; object-fit: {{@root.uiConfig.IMAGE.TABLE.FIT}}; border-radius: {{@root.uiConfig.IMAGE.TABLE.BORDER_RADIUS}};" onerror="this.onerror=null;this.src='https://placehold.co/75x75?text=Img';">
                       </a>
-                    {{/if}}
-                  </div>
-                {{else}}
-                  <span class="text-muted small">No image</span>
-                {{/if}}
-              </td>`;
+                    </div>
+                  {{else}}
+                    <span class="text-muted small">No image</span>
+                  {{/if}}
+                </td>`;
+      }
     }
     if (f.type === '[String]' || f.ui === 'comma-list') {
       return `<td class="text-truncate" style="max-width: 250px;" title="{{this.${f.name}}}">{{this.${f.name}}}</td>`;
@@ -2725,28 +2739,40 @@ allEntities.forEach(ent => {
     const dynamicDetailRows = fieldsList.map(f => {
     const isImg = isImageField(f);
     if (isImg) {
-      return `<div class="mb-3">
-        <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
-        <div>
-          {{#if item.${f.name}}}
-            <div class="d-flex gap-2 flex-wrap mt-1">
-              {{#if item.${f.name}.[0]}}
+      const isArrayImg = f.type === '[Image]' || f.type === '[String]';
+      if (isArrayImg) {
+        return `<div class="mb-3">
+          <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
+          <div>
+            {{#if item.${f.name}}}
+              <div class="d-flex gap-2 flex-wrap mt-1">
                 {{#each item.${f.name}}}
                   <a href="{{this}}" target="_blank" title="View full image">
                     <img src="{{this}}" alt="${f.label}" class="img-thumbnail" style="width: {{@root.uiConfig.IMAGE.DETAIL.WIDTH}}px; height: {{@root.uiConfig.IMAGE.DETAIL.HEIGHT}}px; max-width: {{@root.uiConfig.IMAGE.DETAIL.WIDTH}}px; max-height: {{@root.uiConfig.IMAGE.DETAIL.HEIGHT}}px; object-fit: {{@root.uiConfig.IMAGE.DETAIL.FIT}}; border-radius: {{@root.uiConfig.IMAGE.DETAIL.BORDER_RADIUS}};" onerror="this.onerror=null;this.src='https://placehold.co/260x260?text=No+Image';">
                   </a>
                 {{/each}}
-              {{else}}
+              </div>
+            {{else}}
+              <p class="text-muted mb-0">No image</p>
+            {{/if}}
+          </div>
+        </div>`;
+      } else {
+        return `<div class="mb-3">
+          <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
+          <div>
+            {{#if item.${f.name}}}
+              <div class="d-flex gap-2 flex-wrap mt-1">
                 <a href="{{item.${f.name}}}" target="_blank" title="View full image">
                   <img src="{{item.${f.name}}}" alt="${f.label}" class="img-thumbnail" style="width: {{@root.uiConfig.IMAGE.DETAIL.WIDTH}}px; height: {{@root.uiConfig.IMAGE.DETAIL.HEIGHT}}px; max-width: {{@root.uiConfig.IMAGE.DETAIL.WIDTH}}px; max-height: {{@root.uiConfig.IMAGE.DETAIL.HEIGHT}}px; object-fit: {{@root.uiConfig.IMAGE.DETAIL.FIT}}; border-radius: {{@root.uiConfig.IMAGE.DETAIL.BORDER_RADIUS}};" onerror="this.onerror=null;this.src='https://placehold.co/260x260?text=No+Image';">
                 </a>
-              {{/if}}
-            </div>
-          {{else}}
-            <p class="text-muted mb-0">No image</p>
-          {{/if}}
-        </div>
-      </div>`;
+              </div>
+            {{else}}
+              <p class="text-muted mb-0">No image</p>
+            {{/if}}
+          </div>
+        </div>`;
+      }
     }
     return `<div class="mb-3">
         <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
