@@ -172,6 +172,7 @@ parse_dsl_to_json() {
           else flags.add(tok.toLowerCase());
         });
 
+        const inCard = flags.has("card") || flags.has("incard");
         const isRef = typeToken.toLowerCase() === "objectid" || optionMap.ref || flags.has("ref");
         if (isRef) {
           let target = (optionMap.ref || typeToken).replace(/^ObjectId/i, "").trim() || fName;
@@ -191,7 +192,8 @@ parse_dsl_to_json() {
             fieldName: fName,
             type: relType,
             displayField: display,
-            required: flags.has("required") || flags.has("req")
+            required: flags.has("required") || flags.has("req"),
+            inCard: inCard
           });
         } else {
           let fType = typeToken;
@@ -206,12 +208,14 @@ parse_dsl_to_json() {
             type: fType,
             required: flags.has("required") || flags.has("req"),
             unique: flags.has("unique"),
+            inCard: inCard,
             trim: flags.has("trim"),
             lowercase: flags.has("lowercase"),
             uppercase: flags.has("uppercase"),
             min: optionMap.min || "",
             max: optionMap.max || "",
             defaultValue: optionMap.default || "",
+            enum: optionMap.enum || optionMap.options || "",
             ui: optionMap.ui || (fType === "Boolean" ? "switch" : (fType === "Number" ? "number" : (fType === "Date" ? "date" : "text"))),
             label: fName.charAt(0).toUpperCase() + fName.slice(1)
           });
@@ -375,6 +379,7 @@ INDEP_COLS=()
 INDEP_FIELDS_LIST=()
 INDEP_FIELDS_JSON=()
 INDEP_VIEWS=()
+INDEP_CARD_FIELDS=()
 
 first_indep=true
 while true; do
@@ -437,6 +442,31 @@ while true; do
   read -r -e -p "View layout: [1] Table list, [2] Card list, [3] Both, [4] None (Hidden/No UI) [1]: " input_indep_view || true
   indep_view=$(parse_view_choice "$input_indep_view" "table")
 
+  final_indep_card_fields=""
+  if [[ "$indep_view" == "card" || "$indep_view" == "both" ]]; then
+    detected_card_fields=$(node -e "
+      const p = JSON.parse(process.argv[1]);
+      const f = (p.fields || []).filter(x => x.inCard || x.card).map(x => x.name);
+      console.log(f.join(', '));
+    " "$parsed_indep_json")
+
+    if [[ -n "$detected_card_fields" ]]; then
+      echo -e "  ${CLR_CYAN}📋 Detected Card fields from DSL:${CLR_RESET} [${CLR_BOLD}${detected_card_fields}${CLR_RESET}]"
+      read -r -e -p "  Confirm fields to show on Card (Enter to keep, or enter custom list) [${detected_card_fields}]: " input_indep_card_fields || true
+      final_indep_card_fields="${input_indep_card_fields:-$detected_card_fields}"
+    else
+      default_sug=$(node -e "
+        const p = JSON.parse(process.argv[1]);
+        const f = (p.fields || []).filter(x => !/content|description|password/i.test(x.name)).map(x => x.name);
+        console.log(f.join(', '));
+      " "$parsed_indep_json")
+      echo -e "  ${CLR_YELLOW}💡 Tip: No :card flags found in DSL. Showing suggested fields:${CLR_RESET} [${CLR_BOLD}${default_sug}${CLR_RESET}]"
+      read -r -e -p "  Fields to show on Card (Enter for suggested, or type comma-separated list) [${default_sug}]: " input_indep_card_fields || true
+      final_indep_card_fields="${input_indep_card_fields:-$default_sug}"
+    fi
+  fi
+
+  INDEP_CARD_FIELDS+=("$final_indep_card_fields")
   INDEP_NAMES+=("$indep_name")
   INDEP_COLS+=("$indep_col")
   INDEP_FIELDS_JSON+=("$indep_fields_json")
@@ -464,6 +494,7 @@ DEP_FIELDS_LIST=()
 DEP_FIELDS_JSON=()
 DEP_VIEWS=()
 DEP_REFS_JSON=()
+DEP_CARD_FIELDS=()
 
 first_dep=true
 while true; do
@@ -582,6 +613,33 @@ while true; do
   read -r -e -p "View layout: [1] Table list, [2] Card list, [3] Both, [4] None (Hidden/No UI) [3]: " input_dep_view || true
   dep_view=$(parse_view_choice "$input_dep_view" "both")
 
+  final_dep_card_fields=""
+  if [[ "$dep_view" == "card" || "$dep_view" == "both" ]]; then
+    detected_card_fields=$(node -e "
+      const p = JSON.parse(process.argv[1]);
+      const f = (p.fields || []).filter(x => x.inCard || x.card).map(x => x.name);
+      const r = (p.references || []).filter(x => x.inCard || x.card).map(x => x.fieldName);
+      console.log([...f, ...r].join(', '));
+    " "$parsed_dep_json")
+
+    if [[ -n "$detected_card_fields" ]]; then
+      echo -e "  ${CLR_CYAN}📋 Detected Card fields from DSL:${CLR_RESET} [${CLR_BOLD}${detected_card_fields}${CLR_RESET}]"
+      read -r -e -p "  Confirm fields to show on Card (Enter to keep, or enter custom list) [${detected_card_fields}]: " input_dep_card_fields || true
+      final_dep_card_fields="${input_dep_card_fields:-$detected_card_fields}"
+    else
+      default_sug=$(node -e "
+        const p = JSON.parse(process.argv[1]);
+        const f = (p.fields || []).filter(x => !/content|description|password/i.test(x.name)).map(x => x.name);
+        const r = (p.references || []).map(x => x.fieldName);
+        console.log([...f, ...r].join(', '));
+      " "$parsed_dep_json")
+      echo -e "  ${CLR_YELLOW}💡 Tip: No :card flags found in DSL. Showing suggested fields:${CLR_RESET} [${CLR_BOLD}${default_sug}${CLR_RESET}]"
+      read -r -e -p "  Fields to show on Card (Enter for suggested, or type comma-separated list) [${default_sug}]: " input_dep_card_fields || true
+      final_dep_card_fields="${input_dep_card_fields:-$default_sug}"
+    fi
+  fi
+
+  DEP_CARD_FIELDS+=("$final_dep_card_fields")
   DEP_NAMES+=("$dep_name")
   DEP_COLS+=("$dep_col")
   DEP_FIELDS_JSON+=("$dep_fields_json")
@@ -661,13 +719,13 @@ echo -e "        ${CLR_GREEN}✓ mongodb://127.0.0.1:27017/${DB_NAME}${CLR_RESET
 # ------------------------------------------------------------------------------
 INDEP_JSON_ITEMS=()
 for i in "${!INDEP_NAMES[@]}"; do
-  INDEP_JSON_ITEMS+=("{\"name\":\"${INDEP_NAMES[$i]}\",\"col\":\"${INDEP_COLS[$i]}\",\"fields\":${INDEP_FIELDS_JSON[$i]},\"viewType\":\"${INDEP_VIEWS[$i]}\",\"apiPath\":\"/v1/${INDEP_COLS[$i]}\",\"pagePath\":\"/admin/${INDEP_COLS[$i]}\",\"apiEnabled\":true,\"uiEnabled\":true}")
+  INDEP_JSON_ITEMS+=("{\"name\":\"${INDEP_NAMES[$i]}\",\"col\":\"${INDEP_COLS[$i]}\",\"fields\":${INDEP_FIELDS_JSON[$i]},\"viewType\":\"${INDEP_VIEWS[$i]}\",\"apiPath\":\"/v1/${INDEP_COLS[$i]}\",\"pagePath\":\"/admin/${INDEP_COLS[$i]}\",\"apiEnabled\":true,\"cardFields\":\"${INDEP_CARD_FIELDS[$i]}\",\"uiEnabled\":true}")
 done
 INDEP_JSON="["$(IFS=','; echo "${INDEP_JSON_ITEMS[*]}")"]"
 
 DEP_JSON_ITEMS=()
 for i in "${!DEP_NAMES[@]}"; do
-  DEP_JSON_ITEMS+=("{\"name\":\"${DEP_NAMES[$i]}\",\"col\":\"${DEP_COLS[$i]}\",\"fields\":${DEP_FIELDS_JSON[$i]},\"references\":${DEP_REFS_JSON[$i]},\"viewType\":\"${DEP_VIEWS[$i]}\",\"apiPath\":\"/v1/${DEP_COLS[$i]}\",\"pagePath\":\"/admin/${DEP_COLS[$i]}\",\"apiEnabled\":true,\"uiEnabled\":true}")
+  DEP_JSON_ITEMS+=("{\"name\":\"${DEP_NAMES[$i]}\",\"col\":\"${DEP_COLS[$i]}\",\"fields\":${DEP_FIELDS_JSON[$i]},\"references\":${DEP_REFS_JSON[$i]},\"viewType\":\"${DEP_VIEWS[$i]}\",\"apiPath\":\"/v1/${DEP_COLS[$i]}\",\"pagePath\":\"/admin/${DEP_COLS[$i]}\",\"apiEnabled\":true,\"cardFields\":\"${DEP_CARD_FIELDS[$i]}\",\"uiEnabled\":true}")
 done
 DEP_JSON="["$(IFS=','; echo "${DEP_JSON_ITEMS[*]}")"]"
 
@@ -803,6 +861,7 @@ function parseFields(fieldInput) {
         defaultValue: f.defaultValue !== undefined ? f.defaultValue : '',
         enumValues,
         ui,
+        inCard: !!f.inCard || !!f.card,
         displayField: f.displayField || '',
         label: f.label || capitalize(f.name)
       };
@@ -937,6 +996,7 @@ function parseFields(fieldInput) {
       defaultValue: '',
       enumValues,
       ui,
+      inCard: flagsLower.includes('card') || flagsLower.includes('incard'),
       label: capitalize(name)
     };
   });
@@ -1714,6 +1774,11 @@ function showLogin(req, res) {
 }
 
 async function processLogin(req, res) {
+  const isApi = (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) ||
+                (req.headers['accept'] && req.headers['accept'].includes('application/json'));
+  if (isApi) {
+    return issueToken(req, res);
+  }
   try {
     const username = req.body[authConstants.USER_FIELD] || req.body.username;
     const password = req.body[authConstants.PASS_FIELD] || req.body.password;
@@ -1960,6 +2025,7 @@ const router = express.Router();
 const { showLogin, processLogin, logout, issueToken } = require('../controllers/auth');
 
 // UI Web Pages (Session)
+router.get('/view', showLogin);
 router.get('/login', showLogin);
 router.post('/login', processLogin);
 router.get('/access', showLogin);
@@ -2623,29 +2689,71 @@ allEntities.forEach(ent => {
     listTopActions = `<a href="${pagePath}" class="btn btn-outline-secondary me-2">Cards View</a>`;
   }
 
+  // Selected Card Fields
+  const specifiedCardFields = (ent.cardFields && typeof ent.cardFields === 'string' && ent.cardFields.trim())
+    ? ent.cardFields.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  const isFieldInCard = (fieldName, fieldObj) => {
+    const nameLower = String(fieldName || '').toLowerCase();
+    if (specifiedCardFields.length > 0) {
+      return specifiedCardFields.includes(nameLower);
+    }
+    if (fieldObj && fieldObj.inCard) return true;
+    return !/^(content|password|description|body)$/i.test(nameLower);
+  };
+
   let cardBadges = '';
   references.forEach(r => {
-    const disp = r.displayField || 'name';
-    cardBadges += `<span class="badge bg-info text-dark mb-2 me-1">{{this.${r.fieldName}.${disp}}}{{#unless this.${r.fieldName}.${disp}}}{{this.${r.fieldName}.userAlias}}{{this.${r.fieldName}.name}}{{this.${r.fieldName}.title}}{{this.${r.fieldName}.username}}{{/unless}}</span>`;
-  });
-
-  fieldsList.forEach(f => {
-    const isGen = f.ui === 'gender' || ((f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name)) && (f.ui === 'radio' || f.ui === 'select'));
-    if (isGen) {
-      cardBadges += `{{#if this.${f.name}}}<span class="badge bg-primary mb-2 me-1">Male</span>{{else}}<span class="badge bg-danger mb-2 me-1">Female</span>{{/if}}`;
-    } else if (f.ui === 'select' || f.ui === 'radio' || (f.enumValues && f.enumValues.length > 0)) {
-      cardBadges += `{{#if this.${f.name}}}<span class="badge bg-secondary mb-2 me-1">{{this.${f.name}}}</span>{{/if}}`;
+    if (isFieldInCard(r.fieldName, r)) {
+      const disp = r.displayField || 'name';
+      cardBadges += `<span class="badge bg-info text-dark mb-2 me-1"><i class="bi bi-person"></i> {{this.${r.fieldName}.${disp}}}{{#unless this.${r.fieldName}.${disp}}}{{this.${r.fieldName}.userAlias}}{{this.${r.fieldName}.name}}{{this.${r.fieldName}.title}}{{this.${r.fieldName}.username}}{{/unless}}</span>`;
     }
   });
 
-  const progField = fieldsList.find(f => f.ui === 'progress' || f.name.toLowerCase().includes('progress'));
+  let cardCategoriesHtml = '';
+  let cardMiscHtml = '';
+
+  fieldsList.forEach(f => {
+    if (!isFieldInCard(f.name, f)) return;
+
+    const isGen = f.ui === 'gender' || ((f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name)) && (f.ui === 'radio' || f.ui === 'select'));
+    if (isGen) {
+      cardBadges += `{{#if this.${f.name}}}<span class="badge bg-primary mb-2 me-1">Male</span>{{else}}<span class="badge bg-danger mb-2 me-1">Female</span>{{/if}}`;
+    } else if (f.type === 'Boolean' || f.ui === 'switch' || f.ui === 'checkbox') {
+      if (/published/i.test(f.name)) {
+        cardBadges += `{{#if this.${f.name}}}<span class="badge bg-success mb-2 me-1" title="Published">👁️ Published</span>{{else}}<span class="badge bg-secondary mb-2 me-1" title="Draft">🔒 Draft</span>{{/if}}`;
+      } else {
+        cardBadges += `{{#if this.${f.name}}}<span class="badge bg-success mb-2 me-1">${f.label}</span>{{else}}<span class="badge bg-secondary mb-2 me-1">No ${f.label}</span>{{/if}}`;
+      }
+    } else if (f.ui === 'select' || f.ui === 'radio' || (f.enumValues && f.enumValues.length > 0)) {
+      if (/diff/i.test(f.name)) {
+        cardBadges += `{{#if this.${f.name}}}<span class="badge bg-warning text-dark mb-2 me-1">${f.label}: {{this.${f.name}}}</span>{{/if}}`;
+      } else {
+        cardBadges += `{{#if this.${f.name}}}<span class="badge bg-secondary mb-2 me-1">{{this.${f.name}}}</span>{{/if}}`;
+      }
+    } else if (/reading|duration/i.test(f.name) || (f.type === 'Number' && /time/i.test(f.name))) {
+      cardBadges += `{{#if this.${f.name}}}<span class="badge bg-light text-dark border mb-2 me-1">⏱️ {{this.${f.name}}} mins</span>{{/if}}`;
+    } else if (f.type === '[String]' || f.ui === 'comma-list') {
+      cardCategoriesHtml += `{{#if this.${f.name}}}
+            <div class="mb-2 d-flex flex-wrap gap-1">
+              {{#each this.${f.name}}}
+                <span class="badge bg-secondary">{{this}}</span>
+              {{/each}}
+            </div>{{/if}}`;
+    } else if (!/^(name|title|username|price|progress|thumbnail|image)$/i.test(f.name)) {
+      cardMiscHtml += `<small class="text-muted d-block">${f.label}: {{this.${f.name}}}</small>`;
+    }
+  });
+
+  const progField = fieldsList.find(f => (f.ui === 'progress' || /progress|percent/i.test(f.name)) && isFieldInCard(f.name, f));
   let cardProgressHtml = '';
   if (progField) {
     cardProgressHtml = `{{#if this.${progField.name}}}
             <div class="mt-2">
               <div class="d-flex justify-content-between small text-muted mb-1">
                 <span>${progField.label}</span>
-                <span class="fw-semibold">{{this.${progField.name}}}</span>
+                <span class="fw-semibold">{{percent this.${progField.name}}}</span>
               </div>
               <div class="progress" style="height: 6px;">
                 <div class="progress-bar bg-success" style="width: calc({{this.${progField.name}}} * 100%);"></div>
@@ -2704,6 +2812,8 @@ allEntities.forEach(ent => {
             {{#if this.price}}<span class="badge bg-primary fs-6">\${{this.price}}</span>{{/if}}
           </div>
           ${cardBadges}
+          ${cardCategoriesHtml}
+          ${cardMiscHtml}
           {{#if this.description}}<p class="card-text text-muted small mt-2">{{this.description}}</p>{{/if}}
           ${cardProgressHtml}
         </div>
@@ -3170,6 +3280,14 @@ hbs.registerHelper('eq', function (a, b) {
     return a.toString() === b.toString();
   }
   return a === b;
+});
+
+hbs.registerHelper('percent', function (val) {
+  if (val === undefined || val === null || val === '') return '0%';
+  const num = Number(val);
+  if (isNaN(num)) return val;
+  if (num <= 1 && num > 0) return Math.round(num * 100) + '%';
+  return num + '%';
 });
 
 
