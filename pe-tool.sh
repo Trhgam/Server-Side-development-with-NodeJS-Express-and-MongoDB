@@ -69,6 +69,48 @@ parse_view_choice() {
   esac
 }
 
+# Helper to flush keyboard buffer if user accidentally pasted multi-line text into a single prompt
+flush_stdin() {
+  local dummy
+  while read -t 0.1 -r dummy 2>/dev/null; do :; done || true
+}
+
+# Protected View layout prompt: catches accidental multi-line / DSL paste and stops cascade
+read_view_choice() {
+  local prompt_text="$1"
+  local default_choice="$2"
+  local input_choice
+  while true; do
+    read -r -e -p "$prompt_text" input_choice || true
+    if [[ "$input_choice" =~ (entity|\{|\:|\|) ]]; then
+      echo -e "\n  ${CLR_RED}⚠️ Phát hiện bạn vừa paste khối DSL nhiều dòng vào câu hỏi chọn Layout!${CLR_RESET}" >&2
+      echo -e "  ${CLR_YELLOW}Đã tự động xóa bộ đệm bàn phím để dừng việc nhảy câu hỏi.${CLR_RESET}" >&2
+      flush_stdin
+      continue
+    fi
+    parse_view_choice "$input_choice" "$default_choice"
+    break
+  done
+}
+
+# Protected Yes/No prompt: catches accidental multi-line / DSL paste and stops cascade
+read_yes_no() {
+  local prompt_text="$1"
+  local default_val="$2"
+  local input_val
+  while true; do
+    read -r -e -p "$prompt_text" input_val || true
+    if [[ "$input_val" =~ (entity|\{|\:|\|) ]]; then
+      echo -e "\n  ${CLR_RED}⚠️ Phát hiện bạn vừa paste khối DSL vào câu hỏi Yes/No!${CLR_RESET}" >&2
+      echo -e "  ${CLR_YELLOW}Đã tự động xóa bộ đệm bàn phím để dừng việc nhảy câu hỏi.${CLR_RESET}" >&2
+      flush_stdin
+      continue
+    fi
+    echo "${input_val:-$default_val}"
+    break
+  done
+}
+
 # Helper to read multi-line or single-line DSL / fields input
 read_dsl_or_fields() {
   local prompt_label="$1"
@@ -162,7 +204,7 @@ parse_dsl_to_json() {
       if (colonIdx > 0) {
         const fName = line.slice(0, colonIdx).trim().replace(/^[^a-zA-Z0-9_$]+/, "");
         const defStr = line.slice(colonIdx + 1).trim();
-        const tokens = defStr.split("|").map(t => t.trim()).filter(Boolean);
+        const tokens = (defStr.includes("|") ? defStr.split("|") : defStr.split(":")).map(t => t.trim()).filter(Boolean);
         let typeToken = tokens.shift() || "String";
         const optionMap = {};
         const flags = new Set();
@@ -173,6 +215,10 @@ parse_dsl_to_json() {
         });
 
         const inCard = flags.has("card") || flags.has("incard");
+        const isAlpha = flags.has("alpha") || flags.has("letters");
+        const isPositive = flags.has("positive") || (optionMap.min !== undefined && optionMap.min !== "" && !isNaN(optionMap.min) && Number(optionMap.min) > 0);
+        const isEmail = flags.has("email") || optionMap.ui === "email" || /email/i.test(fName);
+        const isUrl = flags.has("url") || optionMap.ui === "url" || flags.has("image") || flags.has("img");
         const isRef = typeToken.toLowerCase() === "objectid" || optionMap.ref || flags.has("ref");
         if (isRef) {
           let target = (optionMap.ref || typeToken).replace(/^ObjectId/i, "").trim() || fName;
@@ -209,6 +255,10 @@ parse_dsl_to_json() {
             required: flags.has("required") || flags.has("req"),
             unique: flags.has("unique"),
             inCard: inCard,
+            alpha: isAlpha,
+            positive: isPositive,
+            isEmail: isEmail,
+            isUrl: isUrl,
             trim: flags.has("trim"),
             lowercase: flags.has("lowercase"),
             uppercase: flags.has("uppercase"),
@@ -345,8 +395,14 @@ done
 
 sug_mgr_col=$(pluralize "$MGR_NAME")
 read -r -e -p "Collection name [$sug_mgr_col]: " input_mgr_col || true
-MGR_COL=$(echo "${input_mgr_col:-$sug_mgr_col}" | tr -cd '[:alnum:]_')
-MGR_COL="${MGR_COL:-$sug_mgr_col}"
+clean_mgr_col=$(echo "$input_mgr_col" | tr -d '\r' | xargs)
+if [[ "$clean_mgr_col" =~ [:|={}] ]] || [[ "$clean_mgr_col" =~ [[:space:]] ]] || [[ ${#clean_mgr_col} -gt 35 ]]; then
+  echo -e "  ${CLR_YELLOW}Notice: '$clean_mgr_col' looks like a field or DSL. Auto-defaulting collection to '${sug_mgr_col}'.${CLR_RESET}"
+  MGR_COL="$sug_mgr_col"
+else
+  MGR_COL=$(echo "${clean_mgr_col:-$sug_mgr_col}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')
+  MGR_COL="${MGR_COL:-$sug_mgr_col}"
+fi
 
 read -r -e -p "Username field name [username]: " input_mgr_user || true
 MGR_USER_FIELD=$(echo "${input_mgr_user:-username}" | tr -cd '[:alnum:]_')
@@ -365,8 +421,35 @@ else
   MGR_FIELDS="$MGR_FIELDS_RAW"
 fi
 
-read -r -e -p "View layout: [1] Table list, [2] Card list, [3] Both, [4] None (Hidden/No UI) [1]: " input_mgr_view || true
-MGR_VIEW=$(parse_view_choice "$input_mgr_view" "table")
+MGR_VIEW=$(read_view_choice "View layout: [1] Table list, [2] Card list, [3] Both, [4] None (Hidden/No UI) [1]: " "table")
+
+echo ""
+echo -e "Authentication storage mechanism:"
+echo -e "  [1] Express Session (Cookies session) [Default]"
+echo -e "  [2] JWT in HttpOnly Cookie (Cookie only, no express-session)"
+echo -e "  [3] JWT in LocalStorage (Bearer Token + Browser storage)"
+while true; do
+  read -r -e -p "Choose auth mechanism [1]: " input_auth_mode || true
+  if [[ "$input_auth_mode" =~ (entity|\{|\:|\|) ]]; then
+    echo -e "  ${CLR_RED}⚠️ Phát hiện bạn vừa paste khối DSL vào câu hỏi chọn Auth!${CLR_RESET}" >&2
+    echo -e "  ${CLR_YELLOW}Đã tự động xóa bộ đệm bàn phím.${CLR_RESET}" >&2
+    flush_stdin
+    continue
+  fi
+  break
+done
+case "$input_auth_mode" in
+  2|cookie|jwt_cookie)
+    AUTH_MODE="jwt_cookie"
+    ;;
+  3|localstorage|ls|jwt_localstorage)
+    AUTH_MODE="jwt_localstorage"
+    ;;
+  *)
+    AUTH_MODE="session"
+    ;;
+esac
+echo -e "        ${CLR_GREEN}✓ Auth Mechanism: ${AUTH_MODE}${CLR_RESET}"
 
 # ------------------------------------------------------------------------------
 # [2] INDEPENDENT ENTITIES (Lookup / Master data, no foreign keys)
@@ -388,8 +471,23 @@ while true; do
     def_name="brand"
   fi
 
+  pasted_full_dsl=""
   while true; do
     read -r -e -p "Entity name (singular) [$def_name]: " input_indep || true
+    if [[ "$input_indep" =~ entity[[:space:]] ]]; then
+      pasted_full_dsl="$input_indep"
+      if [[ ! "$input_indep" =~ \} ]]; then
+        while IFS= read -r dsl_line; do
+          dsl_line="${dsl_line%$'\r'}"
+          pasted_full_dsl+=$'\n'"$dsl_line"
+          if [[ "$dsl_line" =~ ^[[:space:]]*\} ]]; then
+            break
+          fi
+        done
+      fi
+      break
+    fi
+
     indep_name=$(echo "${input_indep:-$def_name}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')
     indep_name="${indep_name:-$def_name}"
     if [[ "$indep_name" == "$MGR_NAME" ]]; then
@@ -409,38 +507,57 @@ while true; do
     break
   done
 
-  sug_indep_col=$(pluralize "$indep_name")
-  read -r -e -p "Collection name [$sug_indep_col]: " input_indep_col || true
-  indep_col=$(echo "${input_indep_col:-$sug_indep_col}" | tr -cd '[:alnum:]_')
-  indep_col="${indep_col:-$sug_indep_col}"
-
-  while true; do
-    echo -e "  Fields / DSL [name, description]:"
-    echo -e "  ${CLR_YELLOW}(Tip: Paste DSL lines below. When done, press Enter on an empty line or type 'done')${CLR_RESET}"
-    input_indep_dsl=$(read_dsl_or_fields "  > " "name, description")
-
-    parsed_indep_json=$(parse_dsl_to_json "$input_indep_dsl" "$indep_name" "$indep_col")
-    extracted_name=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.entityName || '');" "$parsed_indep_json")
-    extracted_col=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.collection || '');" "$parsed_indep_json")
-    if [[ -n "$extracted_name" && "$extracted_name" != "$indep_name" && "$input_indep_dsl" =~ entity[[:space:]] ]]; then
-      indep_name="$extracted_name"
-      indep_col="${extracted_col:-$(pluralize "$indep_name")}"
-    fi
+  if [[ -n "$pasted_full_dsl" ]]; then
+    parsed_indep_json=$(parse_dsl_to_json "$pasted_full_dsl" "$def_name" "")
+    indep_name=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.entityName || '');" "$parsed_indep_json")
+    indep_col=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.collection || '');" "$parsed_indep_json")
+    indep_name="${indep_name:-$def_name}"
+    indep_col="${indep_col:-$(pluralize "$indep_name")}"
+    input_indep_dsl="$pasted_full_dsl"
     indep_fields_json=$(node -e "const r = JSON.parse(process.argv[1]); console.log(JSON.stringify(r.fields || []));" "$parsed_indep_json")
 
-    echo -e "\n  ${CLR_GREEN}${CLR_BOLD}✓ Parsed Schema JSON:${CLR_RESET}"
+    echo -e "\n  ${CLR_GREEN}${CLR_BOLD}✓ Auto-detected full DSL block for entity '${indep_name}' (collection: '${indep_col}'):${CLR_RESET}"
     print_schema_preview "$parsed_indep_json"
-
-    read -r -e -p "  Confirm this schema? (y/n) [y]: " confirm_schema || true
-    confirm_schema="${confirm_schema:-y}"
-    if [[ "$confirm_schema" =~ ^[Yy]$ ]]; then
-      break
+  else
+    sug_indep_col=$(pluralize "$indep_name")
+    read -r -e -p "Collection name [$sug_indep_col]: " input_indep_col || true
+    clean_indep_col=$(echo "$input_indep_col" | tr -d '\r' | xargs)
+    if [[ "$clean_indep_col" =~ [:|={}] ]] || [[ "$clean_indep_col" =~ [[:space:]] ]] || [[ ${#clean_indep_col} -gt 35 ]]; then
+      echo -e "  ${CLR_YELLOW}Notice: '$clean_indep_col' looks like a field or DSL. Auto-defaulting collection to '${sug_indep_col}'.${CLR_RESET}"
+      indep_col="$sug_indep_col"
+    else
+      indep_col=$(echo "${clean_indep_col:-$sug_indep_col}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')
+      indep_col="${indep_col:-$sug_indep_col}"
     fi
-    echo -e "  ${CLR_YELLOW}Re-entering fields for '${indep_name}':${CLR_RESET}"
-  done
 
-  read -r -e -p "View layout: [1] Table list, [2] Card list, [3] Both, [4] None (Hidden/No UI) [1]: " input_indep_view || true
-  indep_view=$(parse_view_choice "$input_indep_view" "table")
+    while true; do
+      echo -e "  Fields / DSL [name, description]:"
+      echo -e "  ${CLR_YELLOW}(Tip: Paste DSL lines below. When done, press Enter on an empty line or type 'done')${CLR_RESET}"
+      input_indep_dsl=$(read_dsl_or_fields "  > " "name, description")
+
+      parsed_indep_json=$(parse_dsl_to_json "$input_indep_dsl" "$indep_name" "$indep_col")
+      extracted_name=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.entityName || '');" "$parsed_indep_json")
+      extracted_col=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.collection || '');" "$parsed_indep_json")
+      if [[ -n "$extracted_name" && "$input_indep_dsl" =~ entity[[:space:]] ]]; then
+        indep_name="$extracted_name"
+      fi
+      if [[ -n "$extracted_col" && "$input_indep_dsl" =~ collection= ]]; then
+        indep_col="$extracted_col"
+      fi
+      indep_fields_json=$(node -e "const r = JSON.parse(process.argv[1]); console.log(JSON.stringify(r.fields || []));" "$parsed_indep_json")
+
+      echo -e "\n  ${CLR_GREEN}${CLR_BOLD}✓ Parsed Schema JSON:${CLR_RESET}"
+      print_schema_preview "$parsed_indep_json"
+
+      confirm_schema=$(read_yes_no "  Confirm this schema? (y/n) [y]: " "y")
+      if [[ "$confirm_schema" =~ ^[Yy]$ ]]; then
+        break
+      fi
+      echo -e "  ${CLR_YELLOW}Re-entering fields for '${indep_name}':${CLR_RESET}"
+    done
+  fi
+
+  indep_view=$(read_view_choice "View layout: [1] Table list, [2] Card list, [3] Both, [4] None (Hidden/No UI) [1]: " "table")
 
   final_indep_card_fields=""
   if [[ "$indep_view" == "card" || "$indep_view" == "both" ]]; then
@@ -475,8 +592,7 @@ while true; do
 
   first_indep=false
 
-  read -r -e -p "Add another independent entity? (y/n) [n]: " add_more_indep || true
-  add_more_indep="${add_more_indep:-n}"
+  add_more_indep=$(read_yes_no "Add another independent entity? (y/n) [n]: " "n")
   if [[ ! "$add_more_indep" =~ ^[Yy]$ ]]; then
     break
   fi
@@ -501,16 +617,30 @@ while true; do
   if [ "$first_dep" = true ]; then
     def_dep_name="product"
   else
-    read -r -e -p "Add another dependent entity? (y/n) [n]: " add_dep || true
-    add_dep="${add_dep:-n}"
+    add_dep=$(read_yes_no "Add another dependent entity? (y/n) [n]: " "n")
     if [[ ! "$add_dep" =~ ^[Yy]$ ]]; then
       break
     fi
     def_dep_name="item"
   fi
 
+  pasted_dep_dsl=""
   while true; do
     read -r -e -p "Entity name (singular) [$def_dep_name]: " input_dep || true
+    if [[ "$input_dep" =~ entity[[:space:]] ]]; then
+      pasted_dep_dsl="$input_dep"
+      if [[ ! "$input_dep" =~ \} ]]; then
+        while IFS= read -r dsl_line; do
+          dsl_line="${dsl_line%$'\r'}"
+          pasted_dep_dsl+=$'\n'"$dsl_line"
+          if [[ "$dsl_line" =~ ^[[:space:]]*\} ]]; then
+            break
+          fi
+        done
+      fi
+      break
+    fi
+
     dep_name=$(echo "${input_dep:-$def_dep_name}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')
     dep_name="${dep_name:-$def_dep_name}"
     if [[ "$dep_name" == "$MGR_NAME" ]]; then
@@ -530,88 +660,114 @@ while true; do
     break
   done
 
-  sug_dep_col=$(pluralize "$dep_name")
-  read -r -e -p "Collection name [$sug_dep_col]: " input_dep_col || true
-  dep_col=$(echo "${input_dep_col:-$sug_dep_col}" | tr -cd '[:alnum:]_')
-  dep_col="${dep_col:-$sug_dep_col}"
-
-  while true; do
-    echo -e "  Fields / DSL [name, price, description]:"
-    echo -e "  ${CLR_YELLOW}(Tip: Paste DSL lines below. When done, press Enter on an empty line or type 'done')${CLR_RESET}"
-    input_dep_dsl=$(read_dsl_or_fields "  > " "name, price, description")
-
-    parsed_dep_json=$(parse_dsl_to_json "$input_dep_dsl" "$dep_name" "$dep_col")
-    extracted_name=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.entityName || '');" "$parsed_dep_json")
-    extracted_col=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.collection || '');" "$parsed_dep_json")
-    if [[ -n "$extracted_name" && "$extracted_name" != "$dep_name" && "$input_dep_dsl" =~ entity[[:space:]] ]]; then
-      dep_name="$extracted_name"
-      dep_col="${extracted_col:-$(pluralize "$dep_name")}"
-    fi
+  if [[ -n "$pasted_dep_dsl" ]]; then
+    parsed_dep_json=$(parse_dsl_to_json "$pasted_dep_dsl" "$def_dep_name" "")
+    dep_name=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.entityName || '');" "$parsed_dep_json")
+    dep_col=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.collection || '');" "$parsed_dep_json")
+    dep_name="${dep_name:-$def_dep_name}"
+    dep_col="${dep_col:-$(pluralize "$dep_name")}"
+    input_dep_dsl="$pasted_dep_dsl"
     dep_fields_json=$(node -e "const r = JSON.parse(process.argv[1]); console.log(JSON.stringify(r.fields || []));" "$parsed_dep_json")
 
-    echo -e "\n  ${CLR_GREEN}${CLR_BOLD}✓ Parsed Schema JSON:${CLR_RESET}"
+    echo -e "\n  ${CLR_GREEN}${CLR_BOLD}✓ Auto-detected full DSL block for entity '${dep_name}' (collection: '${dep_col}'):${CLR_RESET}"
     print_schema_preview "$parsed_dep_json"
 
-    # Foreign Keys / References configuration (Auto-detected from DSL or manual fallback)
+    # Foreign Keys / References configuration (Auto-detected from DSL)
+    current_refs_json=$(node -e "const r = JSON.parse(process.argv[1]); console.log(JSON.stringify(r.references || []));" "$parsed_dep_json")
     dsl_refs_count=$(node -e "const r = JSON.parse(process.argv[1]); console.log((r.references || []).length);" "$parsed_dep_json")
-    current_refs_json="[]"
-
     if [ "$dsl_refs_count" -gt 0 ]; then
-      current_refs_json=$(node -e "const r = JSON.parse(process.argv[1]); console.log(JSON.stringify(r.references || []));" "$parsed_dep_json")
-      echo -e "  ${CLR_CYAN}⚡ Auto-detected ${dsl_refs_count} reference(s) from DSL (No manual reference input needed)${CLR_RESET}"
+      echo -e "  ${CLR_CYAN}⚡ Auto-detected ${dsl_refs_count} reference(s) from DSL${CLR_RESET}"
+    fi
+  else
+    sug_dep_col=$(pluralize "$dep_name")
+    read -r -e -p "Collection name [$sug_dep_col]: " input_dep_col || true
+    clean_dep_col=$(echo "$input_dep_col" | tr -d '\r' | xargs)
+    if [[ "$clean_dep_col" =~ [:|={}] ]] || [[ "$clean_dep_col" =~ [[:space:]] ]] || [[ ${#clean_dep_col} -gt 35 ]]; then
+      echo -e "  ${CLR_YELLOW}Notice: '$clean_dep_col' looks like a field or DSL. Auto-defaulting collection to '${sug_dep_col}'.${CLR_RESET}"
+      dep_col="$sug_dep_col"
     else
-      # Fallback to manual prompt only if no references were defined in DSL
-      candidates=()
-      for cand in "${INDEP_NAMES[@]:-}"; do
-        if [[ -n "$cand" ]]; then candidates+=("$cand"); fi
-      done
-      for cand in "${DEP_NAMES[@]:-}"; do
-        if [[ -n "$cand" ]]; then candidates+=("$cand"); fi
-      done
+      dep_col=$(echo "${clean_dep_col:-$sug_dep_col}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')
+      dep_col="${dep_col:-$sug_dep_col}"
+    fi
 
-      if [ ${#candidates[@]} -gt 0 ]; then
-        cand_str=$(IFS=', '; echo "${candidates[*]}")
-        default_ref="${candidates[0]}"
-        echo -e "  Available entities to reference: ${CLR_CYAN}[${cand_str}]${CLR_RESET}"
-        read -r -e -p "  Referenced entities (comma-separated, or 'none') [$default_ref]: " input_refs || true
-        raw_refs=$(echo "${input_refs:-$default_ref}" | tr -d ' ' | tr -d '\\"'\''')
-        
-        if [[ "$raw_refs" != "none" && -n "$raw_refs" ]]; then
-          IFS=',' read -ra SELECTED_REFS <<< "$raw_refs"
-          refs_arr=()
-          for r_target in "${SELECTED_REFS[@]}"; do
-            r_target_clean=$(echo "$r_target" | tr -cd '[:alnum:]_')
-            if [[ -z "$r_target_clean" ]]; then continue; fi
+    while true; do
+      echo -e "  Fields / DSL [name, price, description]:"
+      echo -e "  ${CLR_YELLOW}(Tip: Paste DSL lines below. When done, press Enter on an empty line or type 'done')${CLR_RESET}"
+      input_dep_dsl=$(read_dsl_or_fields "  > " "name, price, description")
 
-            read -r -e -p "  - Reference field name for '${r_target_clean}' [${r_target_clean}]: " input_rf || true
-            r_field=$(echo "${input_rf:-$r_target_clean}" | tr -cd '[:alnum:]_')
-            r_field="${r_field:-$r_target_clean}"
+      parsed_dep_json=$(parse_dsl_to_json "$input_dep_dsl" "$dep_name" "$dep_col")
+      extracted_name=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.entityName || '');" "$parsed_dep_json")
+      extracted_col=$(node -e "const r = JSON.parse(process.argv[1]); console.log(r.collection || '');" "$parsed_dep_json")
+      if [[ -n "$extracted_name" && "$input_dep_dsl" =~ entity[[:space:]] ]]; then
+        dep_name="$extracted_name"
+      fi
+      if [[ -n "$extracted_col" && "$input_dep_dsl" =~ collection= ]]; then
+        dep_col="$extracted_col"
+      fi
+      dep_fields_json=$(node -e "const r = JSON.parse(process.argv[1]); console.log(JSON.stringify(r.fields || []));" "$parsed_dep_json")
 
-            read -r -e -p "  - Relationship type for '${r_field}' ([1] Many-to-One N:1, [2] One-to-One 1:1) [1]: " input_rtype || true
-            r_type="N:1"
-            if [[ "$input_rtype" == "2" || "$input_rtype" == "1:1" ]]; then
-              r_type="1:1"
+      echo -e "\n  ${CLR_GREEN}${CLR_BOLD}✓ Parsed Schema JSON:${CLR_RESET}"
+      print_schema_preview "$parsed_dep_json"
+
+      # Foreign Keys / References configuration (Auto-detected from DSL or manual fallback)
+      dsl_refs_count=$(node -e "const r = JSON.parse(process.argv[1]); console.log((r.references || []).length);" "$parsed_dep_json")
+      current_refs_json="[]"
+
+      if [ "$dsl_refs_count" -gt 0 ]; then
+        current_refs_json=$(node -e "const r = JSON.parse(process.argv[1]); console.log(JSON.stringify(r.references || []));" "$parsed_dep_json")
+        echo -e "  ${CLR_CYAN}⚡ Auto-detected ${dsl_refs_count} reference(s) from DSL (No manual reference input needed)${CLR_RESET}"
+      else
+        # Fallback to manual prompt only if no references were defined in DSL
+        candidates=()
+        for cand in "${INDEP_NAMES[@]:-}"; do
+          if [[ -n "$cand" ]]; then candidates+=("$cand"); fi
+        done
+        for cand in "${DEP_NAMES[@]:-}"; do
+          if [[ -n "$cand" ]]; then candidates+=("$cand"); fi
+        done
+
+        if [ ${#candidates[@]} -gt 0 ]; then
+          cand_str=$(IFS=', '; echo "${candidates[*]}")
+          default_ref="${candidates[0]}"
+          echo -e "  Available entities to reference: ${CLR_CYAN}[${cand_str}]${CLR_RESET}"
+          read -r -e -p "  Referenced entities (comma-separated, or 'none') [$default_ref]: " input_refs || true
+          raw_refs=$(echo "${input_refs:-$default_ref}" | tr -d ' ' | tr -d '\\"'\''')
+          
+          if [[ "$raw_refs" != "none" && -n "$raw_refs" ]]; then
+            IFS=',' read -ra SELECTED_REFS <<< "$raw_refs"
+            refs_arr=()
+            for r_target in "${SELECTED_REFS[@]}"; do
+              r_target_clean=$(echo "$r_target" | tr -cd '[:alnum:]_')
+              if [[ -z "$r_target_clean" ]]; then continue; fi
+
+              read -r -e -p "  - Reference field name for '${r_target_clean}' [${r_target_clean}]: " input_rf || true
+              r_field=$(echo "${input_rf:-$r_target_clean}" | tr -cd '[:alnum:]_')
+              r_field="${r_field:-$r_target_clean}"
+
+              read -r -e -p "  - Relationship type for '${r_field}' ([1] Many-to-One N:1, [2] One-to-One 1:1) [1]: " input_rtype || true
+              r_type="N:1"
+              if [[ "$input_rtype" == "2" || "$input_rtype" == "1:1" ]]; then
+                r_type="1:1"
+              fi
+
+              refs_arr+=("{\"targetEntity\":\"$r_target_clean\",\"fieldName\":\"$r_field\",\"type\":\"$r_type\"}")
+            done
+            if [ ${#refs_arr[@]} -gt 0 ]; then
+              current_refs_json="["$(IFS=','; echo "${refs_arr[*]}")"]"
             fi
-
-            refs_arr+=("{\"targetEntity\":\"$r_target_clean\",\"fieldName\":\"$r_field\",\"type\":\"$r_type\"}")
-          done
-          if [ ${#refs_arr[@]} -gt 0 ]; then
-            current_refs_json="["$(IFS=','; echo "${refs_arr[*]}")"]"
           fi
         fi
       fi
-    fi
 
-    read -r -e -p "  Confirm this schema? (y/n) [y]: " confirm_schema || true
-    confirm_schema="${confirm_schema:-y}"
-    if [[ "$confirm_schema" =~ ^[Yy]$ ]]; then
-      break
-    fi
-    echo -e "  ${CLR_YELLOW}Re-entering fields for '${dep_name}':${CLR_RESET}"
-  done
+      confirm_schema=$(read_yes_no "  Confirm this schema? (y/n) [y]: " "y")
+      if [[ "$confirm_schema" =~ ^[Yy]$ ]]; then
+        break
+      fi
+      echo -e "  ${CLR_YELLOW}Re-entering fields for '${dep_name}':${CLR_RESET}"
+    done
+  fi
 
-  read -r -e -p "View layout: [1] Table list, [2] Card list, [3] Both, [4] None (Hidden/No UI) [3]: " input_dep_view || true
-  dep_view=$(parse_view_choice "$input_dep_view" "both")
+  dep_view=$(read_view_choice "View layout: [1] Table list, [2] Card list, [3] Both, [4] None (Hidden/No UI) [3]: " "both")
 
   final_dep_card_fields=""
   if [[ "$dep_view" == "card" || "$dep_view" == "both" ]]; then
@@ -695,7 +851,11 @@ cd "$PROJECT_NAME"
 # ------------------------------------------------------------------------------
 # STEP [03/12] INSTALLING DEPENDENCIES (Clean CDN Bootstrap, NO npm bootstrap)
 # ------------------------------------------------------------------------------
-npm install dotenv mongoose jsonwebtoken bcryptjs express-session cookie-parser hbs >/dev/null 2>&1
+if [[ "$AUTH_MODE" == "session" ]]; then
+  npm install dotenv mongoose jsonwebtoken bcryptjs express-session cookie-parser hbs >/dev/null 2>&1
+else
+  npm install dotenv mongoose jsonwebtoken bcryptjs cookie-parser hbs >/dev/null 2>&1
+fi
 npm install -D nodemon >/dev/null 2>&1
 npm pkg set 'scripts.dev=nodemon ./bin/www' >/dev/null 2>&1
 echo -e "        ${CLR_GREEN}✓ npm install completed (Dependencies verified)${CLR_RESET}"
@@ -733,6 +893,7 @@ cat << EOF > .generator_config.json
 {
   "projectName": "$PROJECT_NAME",
   "dbName": "$DB_NAME",
+  "authMode": "${AUTH_MODE:-session}",
   "manager": {
     "name": "$MGR_NAME",
     "col": "$MGR_COL",
@@ -851,19 +1012,30 @@ function parseFields(fieldInput) {
         else ui = 'text';
       }
 
+      const minVal = f.min !== undefined && f.min !== '' ? f.min : '';
+      const maxVal = f.max !== undefined && f.max !== '' ? f.max : '';
+      const isAlpha = !!f.alpha || !!f.letters;
+      const isPositive = !!f.positive || (minVal !== '' && !isNaN(minVal) && Number(minVal) > 0);
+      const isEmail = !!f.isEmail || !!f.email || ui === 'email' || /email/i.test(f.name);
+      const isUrl = !!f.isUrl || !!f.url || ui === 'url' || isImg;
+
       return {
         name: f.name,
         type: rawType,
         required: !!f.required,
         unique: !!f.unique,
-        min: f.min !== undefined && f.min !== '' ? f.min : '',
-        max: f.max !== undefined && f.max !== '' ? f.max : '',
+        min: minVal,
+        max: maxVal,
         defaultValue: f.defaultValue !== undefined ? f.defaultValue : '',
         enumValues,
         ui,
         inCard: !!f.inCard || !!f.card,
         displayField: f.displayField || '',
-        label: f.label || capitalize(f.name)
+        label: f.label || capitalize(f.name),
+        alpha: isAlpha,
+        positive: isPositive,
+        isEmail,
+        isUrl
       };
     });
   }
@@ -897,8 +1069,11 @@ function parseFields(fieldInput) {
           let isNewField = false;
           if (colIdx !== -1) {
             const after = firstSegment.slice(colIdx + 1).trim().toLowerCase();
-            if (!/^(ui|req|unique|min|max|default|enum|options)=?/.test(after)) {
-              isNewField = true;
+            const flagsPattern = /^(ui|req|required|unique|card|incard|min|max|default|enum|options|trim|lowercase|uppercase)=?/;
+            if (!flagsPattern.test(after)) {
+              if (/^(string|number|boolean|date|image|\[|gender|progress|objectid)/i.test(after) || /^[A-Z]/.test(firstSegment.slice(colIdx + 1).trim())) {
+                isNewField = true;
+              }
             }
           }
           if (!isNewField) {
@@ -927,6 +1102,9 @@ function parseFields(fieldInput) {
     let isProg = false;
     let enumValues = [];
     let uiExplicit = '';
+    let minVal = '';
+    let maxVal = '';
+    let defaultVal = '';
 
     if (/^image$/i.test(rawType)) {
       rawType = 'String';
@@ -953,6 +1131,12 @@ function parseFields(fieldInput) {
         isProg = true;
       } else if (fLower.startsWith('ui=')) {
         uiExplicit = flag.split('=')[1].trim();
+      } else if (fLower.startsWith('min=')) {
+        minVal = flag.split('=')[1].trim();
+      } else if (fLower.startsWith('max=')) {
+        maxVal = flag.split('=')[1].trim();
+      } else if (fLower.startsWith('default=')) {
+        defaultVal = flag.split('=')[1].trim();
       } else if (/^(enum|options|values)=/i.test(flag)) {
         const valStr = flag.replace(/^(enum|options|values)=/i, '');
         enumValues = valStr.split('|').length > 1 ? valStr.split('|').map(v => v.trim()) : valStr.split(/[\/,;]/).map(v => v.trim()).filter(Boolean);
@@ -963,6 +1147,10 @@ function parseFields(fieldInput) {
     const type = rawType.startsWith('[') ? rawType : (rawType.charAt(0).toUpperCase() + rawType.slice(1));
     const isReq = flagsLower.includes('req') || flagsLower.includes('required') || (index === 0);
     const isUnique = flagsLower.includes('unique');
+    const isAlpha = flagsLower.includes('alpha') || flagsLower.includes('letters');
+    const isPositive = flagsLower.includes('positive') || (minVal !== '' && !isNaN(minVal) && Number(minVal) > 0);
+    const isEmail = flagsLower.includes('email') || uiExplicit === 'email' || /email/i.test(name);
+    const isUrl = flagsLower.includes('url') || uiExplicit === 'url' || isImg;
 
     if (!isGender && type === 'Boolean' && /^(gender|sex|ismale)$/i.test(name)) {
       isGender = true;
@@ -991,13 +1179,17 @@ function parseFields(fieldInput) {
       type,
       required: isReq,
       unique: isUnique,
-      min: '',
-      max: '',
-      defaultValue: '',
+      min: minVal,
+      max: maxVal,
+      defaultValue: defaultVal,
       enumValues,
       ui,
       inCard: flagsLower.includes('card') || flagsLower.includes('incard'),
-      label: capitalize(name)
+      label: capitalize(name),
+      alpha: isAlpha,
+      positive: isPositive,
+      isEmail,
+      isUrl
     };
   });
 }
@@ -1365,8 +1557,10 @@ module.exports = new ${capitalize(ent.name)}Repository();
 // -----------------------------------------------------------------------------
 
 fs.writeFileSync('utils/constants/auth.js', `module.exports = {
+  AUTH_MODE: '${config.authMode || "session"}',
   USER_FIELD: '${config.manager.userField}',
   PASS_FIELD: '${config.manager.passField}',
+  COOKIE_NAME: 'token',
   SESSION_USER_KEY: 'user',
   JWT_EXPIRES_IN: '1h'
 };
@@ -1434,12 +1628,45 @@ fs.writeFileSync('utils/constants/ui.js', `module.exports = {
 };
 `);
 
+fs.writeFileSync('utils/constants/errors.js', `// Central Error Status Codes and Messages
+// Dễ dàng tìm kiếm và chỉnh sửa câu chữ hoặc mã lỗi HTTP (400, 401, 404, 409...) khi đi thi
+module.exports = {
+  STATUS: {
+    BAD_REQUEST: 400,
+    UNAUTHORIZED: 401,
+    FORBIDDEN: 403,
+    NOT_FOUND: 404,
+    CONFLICT: 409,
+    INTERNAL_SERVER: 500
+  },
+  MESSAGES: {
+    USERNAME_REQUIRED: '${capitalize(config.manager.userField)} and password are required',
+    INVALID_CREDENTIALS: 'Invalid username or password',
+    USERNAME_EXISTS: 'Username already exists',
+    REQUIRED: (field) => field + ' is required',
+    ALREADY_EXISTS: (field) => field + ' already exists',
+    ALPHA_ONLY: (field) => field + ' must contain only letters and spaces',
+    INVALID_EMAIL: (field) => field + ' must be a valid email format',
+    INVALID_URL: (field) => field + ' must be a valid URL',
+    INVALID_NUMBER: (field) => field + ' must be a valid number',
+    POSITIVE_NUMBER: (field) => field + ' must be a positive number',
+    MIN_NUMBER: (field, min) => field + ' must be at least ' + min,
+    MAX_NUMBER: (field, max) => field + ' must be at most ' + max,
+    RANGE: (field, min, max) => field + ' must be between ' + min + ' and ' + max,
+    ENUM_MISMATCH: (field, list) => field + ' must be one of: ' + list,
+    NOT_FOUND: (entity) => entity + ' not found',
+    CANNOT_DELETE_REFERENCED: (entity, count, dep) => 'Cannot delete ' + entity + ': referenced by ' + count + ' ' + dep + '(s)'
+  }
+};
+`);
+
 // -----------------------------------------------------------------------------
 // 4. MIDDLEWARES (authPage for Session UI & authJWT for Bearer Token API)
 // -----------------------------------------------------------------------------
 
-// Session Authentication for Web Pages
-fs.writeFileSync('middlewares/authPage.js', `const routes = require('../utils/constants/routes');
+// 4. MIDDLEWARES (authPage for Session UI & authJWT for Bearer Token API)
+if (config.authMode === 'session') {
+  fs.writeFileSync('middlewares/authPage.js', `const routes = require('../utils/constants/routes');
 
 module.exports = function authPage(req, res, next) {
   if (req.session && req.session.user) {
@@ -1448,6 +1675,65 @@ module.exports = function authPage(req, res, next) {
   return res.redirect(routes.AUTH.LOGIN);
 };
 `);
+} else if (config.authMode === 'jwt_cookie') {
+  fs.writeFileSync('middlewares/authPage.js', `const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const jwt = require('jsonwebtoken');
+const routes = require('../utils/constants/routes');
+const authConstants = require('../utils/constants/auth');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'SE190703';
+
+module.exports = function authPage(req, res, next) {
+  const token = (req.cookies && req.cookies[authConstants.COOKIE_NAME]) ||
+                (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') && req.headers.authorization.split(' ')[1]);
+  if (!token) {
+    return res.redirect(routes.AUTH.LOGIN);
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    res.locals.currentUser = decoded;
+    return next();
+  } catch (err) {
+    res.clearCookie(authConstants.COOKIE_NAME, { path: '/' });
+    return res.redirect(routes.AUTH.LOGIN);
+  }
+};
+`);
+} else {
+  // jwt_localstorage
+  fs.writeFileSync('middlewares/authPage.js', `const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const jwt = require('jsonwebtoken');
+const routes = require('../utils/constants/routes');
+const authConstants = require('../utils/constants/auth');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'SE190703';
+
+module.exports = function authPage(req, res, next) {
+  const token = (req.cookies && req.cookies[authConstants.COOKIE_NAME]) ||
+                (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') && req.headers.authorization.split(' ')[1]);
+
+  if (!token) {
+    return res.redirect(routes.AUTH.LOGIN);
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    res.locals.currentUser = decoded;
+    return next();
+  } catch (err) {
+    if (req.cookies && req.cookies[authConstants.COOKIE_NAME]) {
+      res.clearCookie(authConstants.COOKIE_NAME, { path: '/' });
+    }
+    return res.redirect(routes.AUTH.LOGIN);
+  }
+};
+`);
+}
 
 // JWT Authentication for REST APIs
 fs.writeFileSync('middlewares/authJWT.js', `const path = require('path');
@@ -1456,16 +1742,23 @@ const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'SE190703';
 
+const authConstants = require('../utils/constants/auth');
+
 module.exports = function authJWT(req, res, next) {
+  let token = null;
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.cookies && req.cookies[authConstants.COOKIE_NAME]) {
+    token = req.cookies[authConstants.COOKIE_NAME];
+  }
+
+  if (!token) {
     return res.status(401).json({
       success: false,
       message: 'Access denied: Bearer token required'
     });
   }
-
-  const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
@@ -1504,6 +1797,67 @@ fs.writeFileSync('middlewares/errorHandler.js', `module.exports = function error
 // 5. SERVICES (Auth & Entity Services with Business Rules & Validations)
 // -----------------------------------------------------------------------------
 
+// Validators Module (Central Validation Rules)
+fs.writeFileSync('utils/validators.js', `// Central Validators Module
+const validators = {
+  // 1. Standard email format check
+  isValidEmail(value) {
+    if (!value) return false;
+    return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(value).trim());
+  },
+
+  // 2. FPT Email check
+  isFptEmail(value) {
+    if (!value) return false;
+    return /^[a-zA-Z0-9._%+-]+@fpt\\.edu\\.vn$/.test(String(value).trim());
+  },
+
+  // 3. Letters and spaces only (Title, Name)
+  isLettersAndSpacesOnly(value) {
+    if (!value) return false;
+    return /^[a-zA-Z\\s]+$/.test(String(value).trim());
+  },
+
+  // 4. Positive number (> 0)
+  isPositiveNumber(value) {
+    const num = Number(value);
+    return !isNaN(num) && num > 0;
+  },
+
+  // 4b. Minimum number
+  isMin(value, min) {
+    const num = Number(value);
+    return !isNaN(num) && num >= min;
+  },
+
+  // 4c. Maximum number
+  isMax(value, max) {
+    const num = Number(value);
+    return !isNaN(num) && num <= max;
+  },
+
+  // 5. URL check (Image/thumbnail)
+  isValidUrl(value) {
+    if (!value) return false;
+    return /^https?:\\/\\/.+/i.test(String(value).trim());
+  },
+
+  // 6. Vietnam Phone check (10 digits starting with 0)
+  isValidPhone(value) {
+    if (!value) return false;
+    return /^0[0-9]{9}$/.test(String(value).trim());
+  },
+
+  // 7. In range check
+  isBetween(value, min, max) {
+    const num = Number(value);
+    return !isNaN(num) && num >= min && num <= max;
+  }
+};
+
+module.exports = validators;
+`);
+
 // Auth Service
 fs.writeFileSync('services/authService.js', `const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
@@ -1513,24 +1867,27 @@ const managerRepo = require('../repositories/${config.manager.name}Repository');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'SE190703';
 
+const errors = require('../utils/constants/errors');
+const { STATUS, MESSAGES } = errors;
+
 async function login(username, password) {
   if (!username || !password) {
-    const err = new Error('Username and password are required');
-    err.status = 400;
+    const err = new Error(MESSAGES.USERNAME_REQUIRED);
+    err.status = STATUS.BAD_REQUEST;
     throw err;
   }
 
   const admin = await managerRepo.findByUsername(username);
   if (!admin) {
-    const err = new Error('Invalid username or password');
-    err.status = 401;
+    const err = new Error(MESSAGES.INVALID_CREDENTIALS);
+    err.status = STATUS.UNAUTHORIZED;
     throw err;
   }
 
   const match = bcrypt.compareSync(password, admin['${config.manager.passField}']);
   if (!match) {
-    const err = new Error('Invalid username or password');
-    err.status = 401;
+    const err = new Error(MESSAGES.INVALID_CREDENTIALS);
+    err.status = STATUS.UNAUTHORIZED;
     throw err;
   }
 
@@ -1581,8 +1938,8 @@ allEntities.forEach(ent => {
   const ${dep.name}Repo = require('../repositories/${dep.name}Repository');
   const count${capitalize(dep.name)} = await ${dep.name}Repo.model.countDocuments({ ${r.fieldName}: id });
   if (count${capitalize(dep.name)} > 0) {
-    const err = new Error('Cannot delete ${ent.name}: referenced by ' + count${capitalize(dep.name)} + ' ${dep.name}(s)');
-    err.status = 400;
+    const err = new Error(MESSAGES.CANNOT_DELETE_REFERENCED('${ent.name}', count${capitalize(dep.name)}, '${dep.name}'));
+    err.status = STATUS.BAD_REQUEST;
     throw err;
   }`;
       }
@@ -1595,8 +1952,8 @@ allEntities.forEach(ent => {
   if (data['${r.fieldName}']) {
     const target = await ${r.targetEntity}Repo.findById(data['${r.fieldName}']);
     if (!target) {
-      const err = new Error('${capitalize(r.targetEntity)} not found');
-      err.status = 400;
+      const err = new Error(MESSAGES.NOT_FOUND('${capitalize(r.targetEntity)}'));
+      err.status = STATUS.BAD_REQUEST;
       throw err;
     }
   }`;
@@ -1620,13 +1977,13 @@ allEntities.forEach(ent => {
     normalizationLogic += `  if (data['${nf}'] !== undefined && data['${nf}'] !== '') {
     data['${nf}'] = Number(data['${nf}']);
     if (isNaN(data['${nf}'])) {
-      const err = new Error('${capitalize(nf)} must be a valid number');
-      err.status = 400;
+      const err = new Error(MESSAGES.INVALID_NUMBER('${capitalize(nf)}'));
+      err.status = STATUS.BAD_REQUEST;
       throw err;
     }
     ${nf.toLowerCase().includes('progress') ? `if (data['${nf}'] < 0 || data['${nf}'] > 1) {
-      const err = new Error('${capitalize(nf)} must be between 0 and 1');
-      err.status = 400;
+      const err = new Error(MESSAGES.RANGE('${capitalize(nf)}', 0, 1));
+      err.status = STATUS.BAD_REQUEST;
       throw err;
     }` : ''}
   }\n`;
@@ -1641,7 +1998,113 @@ allEntities.forEach(ent => {
   }\n`;
   });
 
+  let fieldValidationsCode = '';
+  fields.forEach(f => {
+    if (f.alpha) {
+      fieldValidationsCode += `
+  if (data['${f.name}'] && typeof data['${f.name}'] === 'string' && !validators.isLettersAndSpacesOnly(data['${f.name}'])) {
+    const err = new Error(MESSAGES.ALPHA_ONLY('${f.label}'));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+    }
+    if (f.isEmail || f.ui === 'email') {
+      fieldValidationsCode += `
+  if (data['${f.name}'] && !validators.isValidEmail(data['${f.name}'])) {
+    const err = new Error(MESSAGES.INVALID_EMAIL('${f.label}'));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+    }
+    if (f.isUrl || f.ui === 'url' || f.ui === 'image' || f.type === 'Image') {
+      fieldValidationsCode += `
+  if (data['${f.name}'] && typeof data['${f.name}'] === 'string' && !validators.isValidUrl(data['${f.name}'])) {
+    const err = new Error(MESSAGES.INVALID_URL('${f.label}'));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+    }
+    if (f.type === 'Number') {
+      if (f.positive) {
+        fieldValidationsCode += `
+  if (data['${f.name}'] !== undefined && data['${f.name}'] !== '' && !validators.isPositiveNumber(data['${f.name}'])) {
+    const err = new Error(MESSAGES.POSITIVE_NUMBER('${f.label}'));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+      }
+      if (f.min !== '' && f.max !== '' && !isNaN(f.min) && !isNaN(f.max)) {
+        fieldValidationsCode += `
+  if (data['${f.name}'] !== undefined && data['${f.name}'] !== '' && !validators.isBetween(data['${f.name}'], ${f.min}, ${f.max})) {
+    const err = new Error(MESSAGES.RANGE('${f.label}', ${f.min}, ${f.max}));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+      } else if (f.min !== '' && !isNaN(f.min) && !f.positive) {
+        fieldValidationsCode += `
+  if (data['${f.name}'] !== undefined && data['${f.name}'] !== '' && !validators.isMin(data['${f.name}'], ${f.min})) {
+    const err = new Error(MESSAGES.MIN_NUMBER('${f.label}', ${f.min}));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+      } else if (f.max !== '' && !isNaN(f.max)) {
+        fieldValidationsCode += `
+  if (data['${f.name}'] !== undefined && data['${f.name}'] !== '' && !validators.isMax(data['${f.name}'], ${f.max})) {
+    const err = new Error(MESSAGES.MAX_NUMBER('${f.label}', ${f.max}));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+      }
+    }
+    if (f.ui === 'progress' || f.type === 'Progress' || /progress/i.test(f.name)) {
+      fieldValidationsCode += `
+  if (data['${f.name}'] !== undefined && data['${f.name}'] !== '' && !validators.isBetween(data['${f.name}'], 0, 1)) {
+    const err = new Error(MESSAGES.RANGE('${f.label}', 0, 1));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+    }
+    if (f.enumValues && f.enumValues.length > 0) {
+      const enumArrStr = JSON.stringify(f.enumValues);
+      fieldValidationsCode += `
+  if (data['${f.name}'] && !${enumArrStr}.includes(data['${f.name}'])) {
+    const err = new Error(MESSAGES.ENUM_MISMATCH('${f.label}', '${f.enumValues.join(', ')}'));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+    }
+  });
+
+  const uniqueFields = fields.filter(f => f.unique);
+  let uniqueChecksCreate = '';
+  let uniqueChecksUpdate = '';
+
+  uniqueFields.forEach(f => {
+    uniqueChecksCreate += `
+  if (data['${f.name}'] !== undefined && data['${f.name}'] !== null && String(data['${f.name}']).trim()) {
+    const existing = await repo.model.findOne({ ['${f.name}']: typeof data['${f.name}'] === 'string' ? data['${f.name}'].trim() : data['${f.name}'] });
+    if (existing) {
+      const err = new Error(MESSAGES.ALREADY_EXISTS('${f.label}'));
+      err.status = STATUS.BAD_REQUEST;
+      throw err;
+    }
+  }`;
+
+    uniqueChecksUpdate += `
+  if (data['${f.name}'] !== undefined && data['${f.name}'] !== null && String(data['${f.name}']).trim()) {
+    const existing = await repo.model.findOne({ ['${f.name}']: typeof data['${f.name}'] === 'string' ? data['${f.name}'].trim() : data['${f.name}'] });
+    if (existing && existing._id.toString() !== id.toString()) {
+      const err = new Error(MESSAGES.ALREADY_EXISTS('${f.label}'));
+      err.status = STATUS.BAD_REQUEST;
+      throw err;
+    }
+  }`;
+  });
+
   const serviceCode = `const ${ent.isManager ? "bcrypt = require('bcryptjs');\n" : ''}repo = require('../repositories/${ent.name}Repository');
+const validators = require('../utils/validators');
+const errors = require('../utils/constants/errors');
+const { STATUS, MESSAGES } = errors;
 ${refRepoRequires}
 
 async function getAll${capPlural}(filter = {}) {
@@ -1651,8 +2114,8 @@ async function getAll${capPlural}(filter = {}) {
 async function get${cap}ById(id) {
   const item = ${ent.isManager ? 'await repo.findByIdSafe(id);' : (references.length > 0 ? 'await repo.findByIdPopulated(id);' : 'await repo.findById(id);')}
   if (!item) {
-    const err = new Error('${cap} not found');
-    err.status = 404;
+    const err = new Error(MESSAGES.NOT_FOUND('${cap}'));
+    err.status = STATUS.NOT_FOUND;
     throw err;
   }
   return item;
@@ -1668,18 +2131,12 @@ async function create${cap}(raw) {
   ${ent.isManager ? `if (data['${config.manager.userField}']) {
     const existing = await repo.findByUsername(data['${config.manager.userField}'].trim());
     if (existing) {
-      const err = new Error('Username already exists');
-      err.status = 400;
+      const err = new Error(MESSAGES.USERNAME_EXISTS);
+      err.status = STATUS.BAD_REQUEST;
       throw err;
     }
-  }` : `if (data.title && typeof data.title === 'string' && data.title.trim()) {
-    const existing = await repo.model.findOne({ title: data.title.trim() });
-    if (existing) {
-      const err = new Error('Title already exists');
-      err.status = 400;
-      throw err;
-    }
-  }`}
+  }` : uniqueChecksCreate}
+${fieldValidationsCode}
 ${refExistenceValidation}
   const item = await repo.create(data);
   ${ent.isManager ? `const safe = item.toObject ? item.toObject() : { ...item };
@@ -1694,18 +2151,12 @@ async function update${cap}(id, raw) {
   ${ent.isManager ? `if (data['${config.manager.userField}']) {
     const existing = await repo.findByUsername(data['${config.manager.userField}'].trim());
     if (existing && existing._id.toString() !== id.toString()) {
-      const err = new Error('Username already exists');
-      err.status = 400;
+      const err = new Error(MESSAGES.USERNAME_EXISTS);
+      err.status = STATUS.BAD_REQUEST;
       throw err;
     }
-  }` : `if (data.title && typeof data.title === 'string' && data.title.trim()) {
-    const existing = await repo.model.findOne({ title: data.title.trim() });
-    if (existing && existing._id.toString() !== id.toString()) {
-      const err = new Error('Title already exists');
-      err.status = 400;
-      throw err;
-    }
-  }`}
+  }` : uniqueChecksUpdate}
+${fieldValidationsCode}
 ${refExistenceValidation}
   const item = await repo.updateById(id, data);
   ${ent.isManager ? `if (item && item['${config.manager.passField}']) {
@@ -1752,15 +2203,19 @@ module.exports = {
 // -----------------------------------------------------------------------------
 
 // Auth Controller
-fs.writeFileSync('controllers/auth.js', `const authService = require('../services/authService');
+if (config.authMode === 'session') {
+  fs.writeFileSync('controllers/auth.js', `const authService = require('../services/authService');
 const routes = require('../utils/constants/routes');
 const messages = require('../utils/constants/messages');
 const authConstants = require('../utils/constants/auth');
+const errors = require('../utils/constants/errors');
+const { STATUS, MESSAGES } = errors;
 
 function showLogin(req, res) {
   if (req.session && req.session.user) {
     return res.redirect(routes.AFTER_LOGIN);
   }
+
   const error = req.session ? req.session.login_error : null;
   if (req.session) delete req.session.login_error;
 
@@ -1776,14 +2231,17 @@ function showLogin(req, res) {
 async function processLogin(req, res) {
   const isApi = (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) ||
                 (req.headers['accept'] && req.headers['accept'].includes('application/json'));
-  if (isApi) {
-    return issueToken(req, res);
-  }
   try {
     const username = req.body[authConstants.USER_FIELD] || req.body.username;
     const password = req.body[authConstants.PASS_FIELD] || req.body.password;
 
     if (!username || !password) {
+      if (isApi) {
+        return res.status(STATUS.BAD_REQUEST).json({
+          success: false,
+          message: MESSAGES.USERNAME_REQUIRED
+        });
+      }
       return res.render('auth/login', {
         title: 'Login',
         error: messages.AUTH.INVALID_CREDENTIALS,
@@ -1794,15 +2252,31 @@ async function processLogin(req, res) {
     }
 
     const result = await authService.login(username, password);
+
+    if (isApi) {
+      return res.json({
+        success: true,
+        message: messages.AUTH.LOGIN_SUCCESS,
+        token: result.token,
+        user: result.user,
+        redirectUrl: routes.AFTER_LOGIN
+      });
+    }
+
     req.session.user = {
       id: result.user._id,
       username: result.user[authConstants.USER_FIELD],
       role: result.user.role || 'admin',
       fullName: result.user.fullName || 'User'
     };
-
     return res.redirect(routes.AFTER_LOGIN);
   } catch (err) {
+    if (isApi) {
+      return res.status(err.status || STATUS.UNAUTHORIZED).json({
+        success: false,
+        message: err.message || messages.AUTH.INVALID_CREDENTIALS
+      });
+    }
     return res.render('auth/login', {
       title: 'Login',
       error: err.message || messages.AUTH.INVALID_CREDENTIALS,
@@ -1824,24 +2298,7 @@ function logout(req, res) {
 }
 
 async function issueToken(req, res) {
-  try {
-    const username = req.body[authConstants.USER_FIELD] || req.body.username;
-    const password = req.body[authConstants.PASS_FIELD] || req.body.password;
-
-    if (!username || !password) {
-      return res.status(400).json({ success: false, message: 'Username and password required' });
-    }
-
-    const result = await authService.login(username, password);
-    return res.json({
-      success: true,
-      message: 'Token issued successfully',
-      token: result.token,
-      expiresIn: '1h'
-    });
-  } catch (err) {
-    return res.status(err.status || 401).json({ success: false, message: err.message });
-  }
+  return processLogin(req, res);
 }
 
 module.exports = {
@@ -1851,6 +2308,200 @@ module.exports = {
   issueToken
 };
 `);
+} else if (config.authMode === 'jwt_cookie') {
+  fs.writeFileSync('controllers/auth.js', `const authService = require('../services/authService');
+const routes = require('../utils/constants/routes');
+const messages = require('../utils/constants/messages');
+const authConstants = require('../utils/constants/auth');
+const errors = require('../utils/constants/errors');
+const { STATUS, MESSAGES } = errors;
+
+function showLogin(req, res) {
+  if (req.cookies && req.cookies[authConstants.COOKIE_NAME]) {
+    try {
+      require('jsonwebtoken').verify(req.cookies[authConstants.COOKIE_NAME], process.env.JWT_SECRET || 'SE190703');
+      return res.redirect(routes.AFTER_LOGIN);
+    } catch (e) {}
+  }
+
+  res.render('auth/login', {
+    title: 'Login',
+    userField: authConstants.USER_FIELD,
+    passField: authConstants.PASS_FIELD,
+    routes
+  });
+}
+
+async function processLogin(req, res) {
+  const isApi = (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) ||
+                (req.headers['accept'] && req.headers['accept'].includes('application/json'));
+  try {
+    const username = req.body[authConstants.USER_FIELD] || req.body.username;
+    const password = req.body[authConstants.PASS_FIELD] || req.body.password;
+
+    if (!username || !password) {
+      if (isApi) {
+        return res.status(STATUS.BAD_REQUEST).json({
+          success: false,
+          message: MESSAGES.USERNAME_REQUIRED
+        });
+      }
+      return res.render('auth/login', {
+        title: 'Login',
+        error: messages.AUTH.INVALID_CREDENTIALS,
+        userField: authConstants.USER_FIELD,
+        passField: authConstants.PASS_FIELD,
+        routes
+      });
+    }
+
+    const result = await authService.login(username, password);
+
+    res.cookie(authConstants.COOKIE_NAME, result.token, {
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000,
+      path: '/'
+    });
+
+    if (isApi) {
+      return res.json({
+        success: true,
+        message: messages.AUTH.LOGIN_SUCCESS,
+        token: result.token,
+        user: result.user,
+        redirectUrl: routes.AFTER_LOGIN
+      });
+    }
+
+    return res.redirect(routes.AFTER_LOGIN);
+  } catch (err) {
+    if (isApi) {
+      return res.status(err.status || STATUS.UNAUTHORIZED).json({
+        success: false,
+        message: err.message || messages.AUTH.INVALID_CREDENTIALS
+      });
+    }
+    return res.render('auth/login', {
+      title: 'Login',
+      error: err.message || messages.AUTH.INVALID_CREDENTIALS,
+      userField: authConstants.USER_FIELD,
+      passField: authConstants.PASS_FIELD,
+      routes
+    });
+  }
+}
+
+function logout(req, res) {
+  res.clearCookie(authConstants.COOKIE_NAME, { path: '/' });
+  return res.redirect(routes.AUTH.LOGIN);
+}
+
+async function issueToken(req, res) {
+  return processLogin(req, res);
+}
+
+module.exports = {
+  showLogin,
+  processLogin,
+  logout,
+  issueToken
+};
+`);
+} else {
+  // jwt_localstorage
+  fs.writeFileSync('controllers/auth.js', `const authService = require('../services/authService');
+const routes = require('../utils/constants/routes');
+const messages = require('../utils/constants/messages');
+const authConstants = require('../utils/constants/auth');
+const errors = require('../utils/constants/errors');
+const { STATUS, MESSAGES } = errors;
+
+function showLogin(req, res) {
+  res.render('auth/login', {
+    title: 'Login',
+    userField: authConstants.USER_FIELD,
+    passField: authConstants.PASS_FIELD,
+    routes
+  });
+}
+
+async function processLogin(req, res) {
+  const isApi = (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) ||
+                (req.headers['accept'] && req.headers['accept'].includes('application/json'));
+  try {
+    const username = req.body[authConstants.USER_FIELD] || req.body.username;
+    const password = req.body[authConstants.PASS_FIELD] || req.body.password;
+
+    if (!username || !password) {
+      if (isApi) {
+        return res.status(STATUS.BAD_REQUEST).json({
+          success: false,
+          message: MESSAGES.USERNAME_REQUIRED
+        });
+      }
+      return res.render('auth/login', {
+        title: 'Login',
+        error: messages.AUTH.INVALID_CREDENTIALS,
+        userField: authConstants.USER_FIELD,
+        passField: authConstants.PASS_FIELD,
+        routes
+      });
+    }
+
+    const result = await authService.login(username, password);
+
+    // Set cookie backup for server-rendered page navigation
+    res.cookie(authConstants.COOKIE_NAME, result.token, {
+      httpOnly: false,
+      maxAge: 24 * 60 * 60 * 1000,
+      path: '/'
+    });
+
+    if (isApi) {
+      return res.json({
+        success: true,
+        message: messages.AUTH.LOGIN_SUCCESS,
+        token: result.token,
+        user: result.user,
+        redirectUrl: routes.AFTER_LOGIN
+      });
+    }
+
+    return res.redirect(routes.AFTER_LOGIN);
+  } catch (err) {
+    if (isApi) {
+      return res.status(err.status || STATUS.UNAUTHORIZED).json({
+        success: false,
+        message: err.message || messages.AUTH.INVALID_CREDENTIALS
+      });
+    }
+    return res.render('auth/login', {
+      title: 'Login',
+      error: err.message || messages.AUTH.INVALID_CREDENTIALS,
+      userField: authConstants.USER_FIELD,
+      passField: authConstants.PASS_FIELD,
+      routes
+    });
+  }
+}
+
+function logout(req, res) {
+  res.clearCookie(authConstants.COOKIE_NAME, { path: '/' });
+  return res.send('<!DOCTYPE html><html><body><script>localStorage.removeItem("token");localStorage.removeItem("user");window.location.href="' + routes.AUTH.LOGIN + '";</script></body></html>');
+}
+
+async function issueToken(req, res) {
+  return processLogin(req, res);
+}
+
+module.exports = {
+  showLogin,
+  processLogin,
+  logout,
+  issueToken
+};
+`);
+}
 
 // Entity Controllers (Named Functions, imports Service only)
 allEntities.forEach(ent => {
@@ -1891,10 +2542,12 @@ async function renderDetail(req, res, next) {
       ...refData
     });
   } catch (err) {
-    if (err.status === 404 && req.session) {
+    ${config.authMode === 'session' ? `if (err.status === 404 && req.session) {
       req.session.error_msg = '${cap} not found';
       return res.redirect('${pagePath}');
-    }
+    }` : `if (err.status === 404) {
+      return res.redirect('${pagePath}');
+    }`}
     next(err);
   }
 }
@@ -1902,14 +2555,14 @@ async function renderDetail(req, res, next) {
 async function create(req, res, next) {
   try {
     await ${ent.name}Service.create${cap}(req.body);
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.success_msg = '${cap} created successfully';
-    }
+    }` : ''}
     res.redirect('${pagePath}');
   } catch (err) {
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.error_msg = err.message;
-    }
+    }` : ''}
     res.redirect('${pagePath}');
   }
 }
@@ -1917,14 +2570,14 @@ async function create(req, res, next) {
 async function update(req, res, next) {
   try {
     await ${ent.name}Service.update${cap}(req.params.id, req.body);
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.success_msg = '${cap} updated successfully';
-    }
+    }` : ''}
     res.redirect('${pagePath}');
   } catch (err) {
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.error_msg = err.message;
-    }
+    }` : ''}
     res.redirect('${pagePath}');
   }
 }
@@ -1935,17 +2588,17 @@ async function deleteRecord(req, res, next) {
     if (req.method === 'DELETE' || (req.headers.accept && req.headers.accept.includes('application/json'))) {
       return res.json({ success: true, message: '${cap} deleted successfully' });
     }
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.success_msg = '${cap} deleted successfully';
-    }
+    }` : ''}
     res.redirect('${pagePath}');
   } catch (err) {
     if (req.method === 'DELETE' || (req.headers.accept && req.headers.accept.includes('application/json'))) {
       return res.status(err.status || 400).json({ success: false, message: err.message });
     }
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.error_msg = err.message;
-    }
+    }` : ''}
     res.redirect('${pagePath}');
   }
 }
@@ -2110,6 +2763,7 @@ module.exports = router;
 let indexRequires = `const express = require('express');
 const router = express.Router();
 const routes = require('../utils/constants/routes');
+const authConstants = require('../utils/constants/auth');
 
 const authRouter = require('./auth');
 `;
@@ -2136,9 +2790,11 @@ allEntities.forEach(ent => {
 indexMounts += `
 // Home route redirect
 router.get('/', (req, res) => {
-  if (req.session && req.session.user) {
+  ${config.authMode === 'session' ? `if (req.session && req.session.user) {
     return res.redirect(routes.AFTER_LOGIN);
-  }
+  }` : `if (req.cookies && req.cookies[authConstants.COOKIE_NAME]) {
+    return res.redirect(routes.AFTER_LOGIN);
+  }`}
   return res.redirect(routes.AUTH.LOGIN);
 });
 `;
@@ -2262,9 +2918,17 @@ fs.writeFileSync('views/partials/navbar.hbs', `<nav class="navbar navbar-expand-
           <span class="navbar-text me-3 text-light">
             User: <strong>{{currentUser.username}}</strong>
           </span>
-          <form action="/auth/logout" method="POST" class="d-inline">
+          <form action="/auth/logout" method="POST" class="d-inline" onsubmit="handleClientLogout()">
             <button type="submit" class="btn btn-outline-light btn-sm">Logout</button>
           </form>
+          <script>
+            function handleClientLogout() {
+              if (window.localStorage) {
+                localStorage.removeItem("token");
+                localStorage.removeItem("user");
+              }
+            }
+          </script>
         {{else}}
           <a href="/auth/login" class="btn btn-primary btn-sm">Login</a>
         {{/if}}
@@ -2274,31 +2938,105 @@ fs.writeFileSync('views/partials/navbar.hbs', `<nav class="navbar navbar-expand-
 </nav>
 `);
 
-// Login View (Standard Session Form)
-fs.writeFileSync('views/auth/login.hbs', `<!DOCTYPE html>
+// Auth Views
+if (config.authMode === 'jwt_localstorage') {
+  fs.writeFileSync('views/auth/login.hbs', `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{title}}</title>
-  <link
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-    rel="stylesheet"
-  >
+  <title>{{title}} - {{appName}}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <link rel="stylesheet" href="/stylesheets/style.css">
 </head>
 <body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
-  <div class="card shadow p-4" style="max-width: 420px; width: 100%;">
+  <div class="card shadow-sm p-4" style="width: 100%; max-width: 400px; border-radius: 12px;">
     <div class="text-center mb-4">
-      <h3 class="fw-bold">{{title}}</h3>
-      <p class="text-muted small">Sign in to manage your system</p>
+      <i class="bi bi-shield-lock text-primary" style="font-size: 2.5rem;"></i>
+      <h3 class="fw-bold mt-2">Sign In</h3>
+      <p class="text-muted small">Enter your credentials to continue</p>
     </div>
     {{#if error}}
       <div class="alert alert-danger py-2" role="alert">
         {{error}}
       </div>
     {{/if}}
-    <form action="/auth/login" method="POST">
+    <form id="loginForm" action="/auth/login" method="POST">
+      <div class="mb-3">
+        <label for="username" class="form-label fw-semibold">Username</label>
+        <input type="text" class="form-control" id="username" name="{{userField}}" placeholder="Enter username" required autofocus>
+      </div>
+      <div class="mb-3">
+        <label for="password" class="form-label fw-semibold">Password</label>
+        <input type="password" class="form-control" id="password" name="{{passField}}" placeholder="Enter password" required>
+      </div>
+      <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">Sign In</button>
+    </form>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const form = document.getElementById('loginForm');
+    if (form) {
+      form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        const payload = {
+          '{{userField}}': username,
+          '{{passField}}': password,
+          username,
+          password
+        };
+        try {
+          const res = await fetch('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const result = await res.json();
+          if (!res.ok || !result.token) {
+            alert(result.message || 'Login failed');
+            return;
+          }
+          localStorage.setItem('token', result.token);
+          if (result.user) localStorage.setItem('user', JSON.stringify(result.user));
+          document.cookie = 'token=' + result.token + '; path=/; max-age=86400';
+          window.location.href = result.redirectUrl || '/';
+        } catch (err) {
+          alert('Network or login error: ' + err.message);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
+`);
+} else {
+  // session or jwt_cookie: Pure form without client-side script
+  fs.writeFileSync('views/auth/login.hbs', `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{title}} - {{appName}}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/stylesheets/style.css">
+</head>
+<body class="bg-light d-flex align-items-center justify-content-center min-vh-100">
+  <div class="card shadow-sm p-4" style="width: 100%; max-width: 400px; border-radius: 12px;">
+    <div class="text-center mb-4">
+      <i class="bi bi-shield-lock text-primary" style="font-size: 2.5rem;"></i>
+      <h3 class="fw-bold mt-2">Sign In</h3>
+      <p class="text-muted small">Enter your credentials to continue</p>
+    </div>
+    {{#if error}}
+      <div class="alert alert-danger py-2" role="alert">
+        {{error}}
+      </div>
+    {{/if}}
+    <form id="loginForm" action="/auth/login" method="POST">
       <div class="mb-3">
         <label for="username" class="form-label fw-semibold">Username</label>
         <input type="text" class="form-control" id="username" name="{{userField}}" placeholder="Enter username" required autofocus>
@@ -2314,6 +3052,7 @@ fs.writeFileSync('views/auth/login.hbs', `<!DOCTYPE html>
 </body>
 </html>
 `);
+}
 
 fs.writeFileSync('views/error.hbs', `{{> header}}
 <div class="alert alert-danger my-5">
@@ -2433,9 +3172,10 @@ allEntities.forEach(ent => {
             <input type="date" name="${f.name}" class="form-control" ${f.required ? 'required' : ''}>
           </div>`;
     } else {
+      const titlePattern = (f.alpha || f.letters) ? 'pattern="[a-zA-Z\\s]+" title="' + f.label + ' must contain only letters and spaces"' : '';
       return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
-            <input type="text" name="${f.name}" class="form-control" placeholder="Enter ${f.label}" ${f.defaultValue ? `value="${f.defaultValue}"` : ''} ${f.required ? 'required' : ''}>
+            <input type="text" name="${f.name}" class="form-control" ${titlePattern} placeholder="Enter ${f.label}" ${f.defaultValue ? `value="${f.defaultValue}"` : ''} ${f.required ? 'required' : ''}>
           </div>`;
     }
   }
@@ -2533,9 +3273,10 @@ allEntities.forEach(ent => {
             <input type="date" name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
           </div>`;
     } else {
+      const titlePattern = (f.alpha || f.letters) ? 'pattern="[a-zA-Z\\s]+" title="' + f.label + ' must contain only letters and spaces"' : '';
       return `<div class="mb-3">
             <label class="form-label fw-semibold">${f.label}</label>
-            <input type="text" name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
+            <input type="text" name="${f.name}" class="form-control" ${titlePattern} value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
           </div>`;
     }
   }
@@ -2732,8 +3473,9 @@ allEntities.forEach(ent => {
       } else {
         cardBadges += `{{#if this.${f.name}}}<span class="badge bg-secondary mb-2 me-1">{{this.${f.name}}}</span>{{/if}}`;
       }
-    } else if (/reading|duration/i.test(f.name) || (f.type === 'Number' && /time/i.test(f.name))) {
-      cardBadges += `{{#if this.${f.name}}}<span class="badge bg-light text-dark border mb-2 me-1">⏱️ {{this.${f.name}}} mins</span>{{/if}}`;
+    } else if (f.type === 'Number' && (f.positive || (f.min !== '' && !isNaN(f.min) && Number(f.min) > 0))) {
+      const isTimeLike = /reading|duration|time/i.test(f.name);
+      cardBadges += `{{#if this.${f.name}}}<span class="badge bg-light text-dark border mb-2 me-1">${isTimeLike ? '⏱️ ' : ''}{{this.${f.name}}}${isTimeLike ? ' mins' : ''}</span>{{/if}}`;
     } else if (f.type === '[String]' || f.ui === 'comma-list') {
       cardCategoriesHtml += `{{#if this.${f.name}}}
             <div class="mb-2 d-flex flex-wrap gap-1">
@@ -3142,12 +3884,17 @@ function deleteItem(url, redirectUrl) {
 
 async function executeDelete(url, redirectUrl) {
   try {
+    const reqHeaders = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+    ${config.authMode === 'jwt_localstorage' ? `const localToken = (window.localStorage && localStorage.getItem('token')) || '';
+    if (localToken) {
+      reqHeaders['Authorization'] = 'Bearer ' + localToken;
+    }` : ''}
     const response = await fetch(url, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
+      headers: reqHeaders
     });
     const result = await response.json().catch(() => ({}));
     if (response.ok && result.success !== false) {
@@ -3252,8 +3999,7 @@ const createError = require('http-errors');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const logger = require('morgan');
-const session = require('express-session');
-const mongoose = require('mongoose');
+${config.authMode === 'session' ? "const session = require('express-session');\n" : ""}const mongoose = require("mongoose"); // import mongoose to use it for database connection
 const hbs = require('hbs');
 const fs = require('fs');
 
@@ -3262,19 +4008,25 @@ require('./models');
 
 const routes = require('./utils/constants/routes');
 const uiConfig = require('./utils/constants/ui');
+const authConstants = require('./utils/constants/auth');
 const indexRouter = require('./routes/index');
 const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/${config.dbName}';
-mongoose.connect(MONGODB_URI)
-  .then(() => console.log('MongoDB connected successfully to ${config.dbName}'))
-  .catch(err => console.error('MongoDB connection error:', err.message));
+//tạo connection
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(() => console.log("Connected to MongoDB database"))
+  .catch((err) => {
+    console.error("Error connecting to MongoDB database", err);
+  });
 
+// view engine setup
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'hbs');
 
+// Register hbs helpers
 hbs.registerHelper('eq', function (a, b) {
   if (a !== undefined && b !== undefined && a !== null && b !== null) {
     return a.toString() === b.toString();
@@ -3289,7 +4041,6 @@ hbs.registerHelper('percent', function (val) {
   if (num <= 1 && num > 0) return Math.round(num * 100) + '%';
   return num + '%';
 });
-
 
 function registerPartialsRecursively(dir) {
   if (!fs.existsSync(dir)) return;
@@ -3323,28 +4074,49 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.use(session({
+${config.authMode === 'session' ? `app.use(session({
   secret: 'sdn302-session-secret-key-se190703',
   resave: false,
   saveUninitialized: false,
   cookie: { maxAge: 24 * 60 * 60 * 1000 }
-}));
+}));` : ''}
 
 app.use((req, res, next) => {
   res.locals.appName = '${config.projectName}';
   res.locals.routes = routes;
   res.locals.uiConfig = uiConfig;
-  res.locals.currentUser = (req.session && req.session.user) ? req.session.user : null;
+  res.locals.authMode = '${config.authMode || "session"}';
+
+  ${config.authMode === 'session' ? `res.locals.currentUser = (req.session && req.session.user) ? req.session.user : null;
   res.locals.success_msg = req.session ? req.session.success_msg : null;
   res.locals.error_msg = req.session ? req.session.error_msg : null;
   if (req.session) {
     delete req.session.success_msg;
     delete req.session.error_msg;
-  }
+  }` : (config.authMode === 'jwt_cookie' ? `const token = req.cookies && req.cookies[authConstants.COOKIE_NAME];
+  if (token) {
+    try {
+      res.locals.currentUser = require('jsonwebtoken').verify(token, process.env.JWT_SECRET || 'SE190703');
+    } catch (e) {
+      res.locals.currentUser = null;
+    }
+  } else {
+    res.locals.currentUser = null;
+  }` : `const token = (req.cookies && req.cookies[authConstants.COOKIE_NAME]) ||
+                (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') && req.headers.authorization.split(' ')[1]);
+  if (token) {
+    try {
+      res.locals.currentUser = require('jsonwebtoken').verify(token, process.env.JWT_SECRET || 'SE190703');
+    } catch (e) {
+      res.locals.currentUser = null;
+    }
+  } else {
+    res.locals.currentUser = null;
+  }`)}
   next();
 });
 
-// Single Mount of Master Router Hub
+// Mount Routes
 app.use('/', indexRouter);
 
 // Catch 404 and forward to error handler
@@ -3467,6 +4239,24 @@ async function runProvisioning() {
 
   console.log("✓ Verified all required collections exist: " + requiredCols.join(', '));
   console.log("  Collections are ready for data import via mongoimport or application usage.");
+
+  // Seed default admin account if manager collection is empty
+  const mgrCol = db.collection(config.manager.col);
+  const mgrCount = await mgrCol.countDocuments();
+  if (mgrCount === 0) {
+    const bcrypt = require('bcryptjs');
+    const defaultUser = {
+      [config.manager.userField]: 'admin',
+      [config.manager.passField]: bcrypt.hashSync('123456', 10),
+      role: 'admin',
+      fullName: 'System Administrator',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    await mgrCol.insertOne(defaultUser);
+    console.log("✓ Created initial admin account: admin / 123456 in collection '" + config.manager.col + "'");
+  }
+
   await mongoose.disconnect();
   console.log("✓ MongoDB connection closed cleanly");
 }
