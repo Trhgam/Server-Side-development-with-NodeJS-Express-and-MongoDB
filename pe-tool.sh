@@ -215,6 +215,8 @@ parse_dsl_to_json() {
         });
 
         const inCard = flags.has("card") || flags.has("incard");
+        const inJwt = flags.has("jwt") || flags.has("injwt") || flags.has("token");
+        const isPercent = flags.has("percent") || flags.has("pct") || optionMap.ui === "percent";
         const isAlpha = flags.has("alpha") || flags.has("letters");
         const isPositive = flags.has("positive") || (optionMap.min !== undefined && optionMap.min !== "" && !isNaN(optionMap.min) && Number(optionMap.min) > 0);
         const isEmail = flags.has("email") || optionMap.ui === "email" || /email/i.test(fName);
@@ -255,6 +257,8 @@ parse_dsl_to_json() {
             required: flags.has("required") || flags.has("req"),
             unique: flags.has("unique"),
             inCard: inCard,
+            inJwt: inJwt,
+            isPercent: isPercent,
             alpha: isAlpha,
             positive: isPositive,
             isEmail: isEmail,
@@ -310,6 +314,8 @@ print_schema_preview() {
     if (f.max !== undefined && f.max !== "") def.max = isNaN(f.max) ? f.max : Number(f.max);
     if (f.defaultValue !== undefined && f.defaultValue !== "") def.default = f.defaultValue;
     if (f.ui && f.ui !== "text") def.ui = f.ui;
+    if (f.inCard) def.inCard = true;
+    if (f.inJwt) def.inJwt = true;
     schemaObj[f.name] = def;
   });
 
@@ -412,7 +418,19 @@ read -r -e -p "Password field name [password]: " input_mgr_pass || true
 MGR_PASS_FIELD=$(echo "${input_mgr_pass:-password}" | tr -cd '[:alnum:]_')
 MGR_PASS_FIELD="${MGR_PASS_FIELD:-password}"
 
-read -r -e -p "Additional fields for $MGR_NAME (DSL, e.g. fullName:String, avatar:Image) [n]: " input_mgr_fields || true
+read -r -e -p "Value of ${MGR_USER_FIELD} for the first account [admin]: " input_mgr_user_val || true
+MGR_USER_VALUE=$(echo "${input_mgr_user_val:-admin}" | tr -d '\r')
+MGR_USER_VALUE="${MGR_USER_VALUE:-admin}"
+
+read -r -e -p "Value of ${MGR_PASS_FIELD} for the first account (will be bcrypt-hashed) [123456]: " input_mgr_pass_val || true
+MGR_PASS_VALUE=$(echo "${input_mgr_pass_val:-123456}" | tr -d '\r')
+MGR_PASS_VALUE="${MGR_PASS_VALUE:-123456}"
+export MGR_USER_VALUE MGR_PASS_VALUE
+
+echo -e "  ${CLR_YELLOW}Tip: Ngoài 2 trường đăng nhập trên, nếu entity có thêm trường (vd: fullName, role, avatar...) hãy nhập vào.${CLR_RESET}"
+echo -e "  ${CLR_YELLOW}Dùng DSL: 'tên:Kiểu:flag...' — flag :jwt = thêm vào JWT payload & session, :card = hiển thị card.${CLR_RESET}"
+echo -e "  ${CLR_YELLOW}Ví dụ: role:String:jwt, fullName:String:jwt:card, avatar:Image${CLR_RESET}"
+read -r -e -p "Additional fields for $MGR_NAME [n (không có thêm)]: " input_mgr_fields || true
 MGR_FIELDS_RAW=$(echo "${input_mgr_fields}" | tr -d '\r' | xargs)
 MGR_FIELDS_LOWER=$(echo "$MGR_FIELDS_RAW" | tr '[:upper:]' '[:lower:]')
 if [[ -z "$MGR_FIELDS_RAW" || "$MGR_FIELDS_LOWER" == "none" || "$MGR_FIELDS_LOWER" == "n" || "$MGR_FIELDS_LOWER" == "no" || "$MGR_FIELDS_LOWER" == "0" ]]; then
@@ -1030,6 +1048,8 @@ function parseFields(fieldInput) {
         enumValues,
         ui,
         inCard: !!f.inCard || !!f.card,
+        inJwt: !!f.inJwt || !!f.jwt,
+        isPercent: !!f.isPercent || f.ui === 'percent' || !!f.percent,
         displayField: f.displayField || '',
         label: f.label || capitalize(f.name),
         alpha: isAlpha,
@@ -1069,7 +1089,7 @@ function parseFields(fieldInput) {
           let isNewField = false;
           if (colIdx !== -1) {
             const after = firstSegment.slice(colIdx + 1).trim().toLowerCase();
-            const flagsPattern = /^(ui|req|required|unique|card|incard|min|max|default|enum|options|trim|lowercase|uppercase)=?/;
+            const flagsPattern = /^(ui|req|required|unique|card|incard|jwt|injwt|token|percent|pct|min|max|default|enum|options|trim|lowercase|uppercase)=?/;
             if (!flagsPattern.test(after)) {
               if (/^(string|number|boolean|date|image|\[|gender|progress|objectid)/i.test(after) || /^[A-Z]/.test(firstSegment.slice(colIdx + 1).trim())) {
                 isNewField = true;
@@ -1185,6 +1205,8 @@ function parseFields(fieldInput) {
       enumValues,
       ui,
       inCard: flagsLower.includes('card') || flagsLower.includes('incard'),
+      inJwt: flagsLower.includes('jwt') || flagsLower.includes('injwt') || flagsLower.includes('token'),
+      isPercent: flagsLower.includes('percent') || flagsLower.includes('pct') || uiExplicit === 'percent',
       label: capitalize(name),
       alpha: isAlpha,
       positive: isPositive,
@@ -1276,12 +1298,16 @@ function resolveReference(r) {
   const canonicalModel = capitalize(canonicalName);
 
   let disp = r.displayField;
-  if (!disp || disp === 'name') {
-    if (matched && matched.fields) {
-      const parsed = parseFields(matched.fields);
-      const aliasOrTitle = parsed.find(f => f.type === 'String' && /alias|title|name|user/i.test(f.name));
-      const firstString = parsed.find(f => f.type === 'String');
-      if (aliasOrTitle) disp = aliasOrTitle.name;
+  const matchedFields = (matched && matched.fields) ? parseFields(matched.fields) : [];
+  const dispExistsInFields = matchedFields.some(f => f.name === disp);
+
+  if (!disp || disp === 'name' || disp === canonicalName || !dispExistsInFields) {
+    if (matchedFields.length > 0) {
+      const entityNameField = matchedFields.find(f => f.name.toLowerCase() === (canonicalName + 'name').toLowerCase());
+      const aliasOrTitle = matchedFields.find(f => f.type === 'String' && /name|title|alias|label|code/i.test(f.name));
+      const firstString = matchedFields.find(f => f.type === 'String');
+      if (entityNameField) disp = entityNameField.name;
+      else if (aliasOrTitle) disp = aliasOrTitle.name;
       else if (firstString) disp = firstString.name;
     }
   }
@@ -1891,12 +1917,18 @@ async function login(username, password) {
     throw err;
   }
 
+  // Build JWT payload: always include id + userField, plus any extra field flagged :jwt
+  const jwtExtra = ${
+    (() => {
+      const jwtFields = extraMgrFields.filter(f => f.inJwt);
+      if (jwtFields.length === 0) return '{}';
+      return '{' + jwtFields.map(f => "'" + f.name + "': admin['" + f.name + "']").join(', ') + '}';
+    })()
+  };
+  const jwtPayload = Object.assign({ id: admin._id, '${config.manager.userField}': admin['${config.manager.userField}'] }, jwtExtra);
+
   const token = jwt.sign(
-    {
-      id: admin._id,
-      username: admin['${config.manager.userField}'],
-      role: admin.role || 'admin'
-    },
+    jwtPayload,
     JWT_SECRET,
     { expiresIn: '1h' }
   );
@@ -2037,6 +2069,13 @@ allEntities.forEach(ent => {
         fieldValidationsCode += `
   if (data['${f.name}'] !== undefined && data['${f.name}'] !== '' && !validators.isBetween(data['${f.name}'], ${f.min}, ${f.max})) {
     const err = new Error(MESSAGES.RANGE('${f.label}', ${f.min}, ${f.max}));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+      } else if (f.isPercent || f.ui === 'percent' || /^(off|discount|percent)$/i.test(f.name)) {
+        fieldValidationsCode += `
+  if (data['${f.name}'] !== undefined && data['${f.name}'] !== '' && !validators.isBetween(data['${f.name}'], 0, 1)) {
+    const err = new Error(MESSAGES.RANGE('${f.label}', 0, 1));
     err.status = STATUS.BAD_REQUEST;
     throw err;
   }`;
@@ -2263,12 +2302,16 @@ async function processLogin(req, res) {
       });
     }
 
-    req.session.user = {
-      id: result.user._id,
-      username: result.user[authConstants.USER_FIELD],
-      role: result.user.role || 'admin',
-      fullName: result.user.fullName || 'User'
-    };
+    req.session.user = Object.assign(
+      { id: result.user._id, [authConstants.USER_FIELD]: result.user[authConstants.USER_FIELD] },
+      ${
+        (() => {
+          const jwtFields = extraMgrFields.filter(f => f.inJwt);
+          if (jwtFields.length === 0) return '{}';
+          return '{' + jwtFields.map(f => "'" + f.name + "': result.user['" + f.name + "']").join(', ') + '}';
+        })()
+      }
+    );
     return res.redirect(routes.AFTER_LOGIN);
   } catch (err) {
     if (isApi) {
@@ -2555,30 +2598,30 @@ async function renderDetail(req, res, next) {
 async function create(req, res, next) {
   try {
     await ${ent.name}Service.create${cap}(req.body);
-    ${config.authMode === 'session' ? `if (req.session) {
+    if (req.session) {
       req.session.success_msg = '${cap} created successfully';
-    }` : ''}
-    res.redirect('${pagePath}');
+    }
+    res.redirect('${pagePath}?msg=' + encodeURIComponent('${cap} created successfully'));
   } catch (err) {
-    ${config.authMode === 'session' ? `if (req.session) {
+    if (req.session) {
       req.session.error_msg = err.message;
-    }` : ''}
-    res.redirect('${pagePath}');
+    }
+    res.redirect('${pagePath}?error=' + encodeURIComponent(err.message));
   }
 }
 
 async function update(req, res, next) {
   try {
     await ${ent.name}Service.update${cap}(req.params.id, req.body);
-    ${config.authMode === 'session' ? `if (req.session) {
+    if (req.session) {
       req.session.success_msg = '${cap} updated successfully';
-    }` : ''}
-    res.redirect('${pagePath}');
+    }
+    res.redirect('${pagePath}?msg=' + encodeURIComponent('${cap} updated successfully'));
   } catch (err) {
-    ${config.authMode === 'session' ? `if (req.session) {
+    if (req.session) {
       req.session.error_msg = err.message;
-    }` : ''}
-    res.redirect('${pagePath}');
+    }
+    res.redirect('${pagePath}?error=' + encodeURIComponent(err.message));
   }
 }
 
@@ -3081,9 +3124,13 @@ allEntities.forEach(ent => {
 
   function generateAddInput(f, entName) {
     const isProg = f.ui === 'progress' || f.name.toLowerCase().includes('progress');
-    const minAttr = f.min !== undefined && f.min !== '' ? `min="${f.min}"` : '';
-    const maxAttr = f.max !== undefined && f.max !== '' ? `max="${f.max}"` : '';
-    const rangeAttr = isProg ? 'min="0" max="1" step="0.05"' : `${minAttr} ${maxAttr}`.trim();
+    const isPct = f.isPercent || f.ui === 'percent' || /^(off|discount|percent)$/i.test(f.name);
+    const minVal = f.min !== undefined && f.min !== '' ? f.min : (isProg || isPct ? '0' : '');
+    const maxVal = f.max !== undefined && f.max !== '' ? f.max : (isProg || isPct ? '1' : '');
+    const minAttr = minVal !== '' ? `min="${minVal}"` : '';
+    const maxAttr = maxVal !== '' ? `max="${maxVal}"` : '';
+    const stepAttr = isProg ? 'step="0.05"' : 'step="any"';
+    const rangeAttr = `${minAttr} ${maxAttr} ${stepAttr}`.trim();
 
     if (f.ui === 'radio') {
       const isGenderRadio = f.ui === 'gender' || f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name);
@@ -3161,10 +3208,10 @@ allEntities.forEach(ent => {
             <label class="form-label fw-semibold">${f.label} (comma-separated list)</label>
             <input type="text" name="${f.name}" class="form-control" placeholder="item1, item2, item3" ${f.required ? 'required' : ''}>
           </div>`;
-    } else if (f.ui === 'number' || f.type === 'Number') {
+    } else if (f.ui === 'number' || f.type === 'Number' || isPct) {
       return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}${isProg ? ' (0.0 - 1.0 or %)' : ''}</label>
-            <input type="number" step="any" ${rangeAttr} name="${f.name}" class="form-control" placeholder="${isProg ? 'e.g. 0.8' : 'Enter ' + f.label}" ${f.required ? 'required' : ''}>
+            <label class="form-label fw-semibold">${f.label}${isProg || isPct ? ' (0.0 - 1.0, e.g. 0.35)' : ''}</label>
+            <input type="number" ${rangeAttr} name="${f.name}" class="form-control" placeholder="${isProg ? 'e.g. 0.8' : (isPct ? 'e.g. 0.35' : 'Enter ' + f.label)}" ${f.required ? 'required' : ''}>
           </div>`;
     } else if (f.ui === 'date' || f.type === 'Date') {
       return `<div class="mb-3">
@@ -3182,9 +3229,13 @@ allEntities.forEach(ent => {
 
   function generateEditInput(f, entName) {
     const isProg = f.ui === 'progress' || f.name.toLowerCase().includes('progress');
-    const minAttr = f.min !== undefined && f.min !== '' ? `min="${f.min}"` : '';
-    const maxAttr = f.max !== undefined && f.max !== '' ? `max="${f.max}"` : '';
-    const rangeAttr = isProg ? 'min="0" max="1" step="0.05"' : `${minAttr} ${maxAttr}`.trim();
+    const isPct = f.isPercent || f.ui === 'percent' || /^(off|discount|percent)$/i.test(f.name);
+    const minVal = f.min !== undefined && f.min !== '' ? f.min : (isProg || isPct ? '0' : '');
+    const maxVal = f.max !== undefined && f.max !== '' ? f.max : (isProg || isPct ? '1' : '');
+    const minAttr = minVal !== '' ? `min="${minVal}"` : '';
+    const maxAttr = maxVal !== '' ? `max="${maxVal}"` : '';
+    const stepAttr = isProg ? 'step="0.05"' : 'step="any"';
+    const rangeAttr = `${minAttr} ${maxAttr} ${stepAttr}`.trim();
 
     if (f.ui === 'radio') {
       const isGenderRadio = f.ui === 'gender' || f.type === 'Gender' || /^(gender|sex|ismale)$/i.test(f.name);
@@ -3262,10 +3313,10 @@ allEntities.forEach(ent => {
             <label class="form-label fw-semibold">${f.label} (comma-separated list)</label>
             <input type="text" name="${f.name}" class="form-control" value="{{this.${f.name}}}" placeholder="item1, item2, item3" ${f.required ? 'required' : ''}>
           </div>`;
-    } else if (f.ui === 'number' || f.type === 'Number') {
+    } else if (f.ui === 'number' || f.type === 'Number' || isPct) {
       return `<div class="mb-3">
-            <label class="form-label fw-semibold">${f.label}${isProg ? ' (0.0 - 1.0 or %)' : ''}</label>
-            <input type="number" step="any" ${rangeAttr} name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
+            <label class="form-label fw-semibold">${f.label}${isProg || isPct ? ' (0.0 - 1.0, e.g. 0.35)' : ''}</label>
+            <input type="number" ${rangeAttr} name="${f.name}" class="form-control" value="{{this.${f.name}}}" ${f.required ? 'required' : ''}>
           </div>`;
     } else if (f.ui === 'date' || f.type === 'Date') {
       return `<div class="mb-3">
@@ -3317,23 +3368,9 @@ allEntities.forEach(ent => {
             <label class="form-label fw-semibold">${refLabel}</label>
             <select name="${r.fieldName}" class="form-select" required>
               <option value="">-- Select ${capitalize(targetSingular)} --</option>
-              {{#if ${targetPlural}}}
-                {{#each ${targetPlural}}}
-                  <option value="{{this._id}}">{{#if this.${disp}}}{{this.${disp}}}{{else}}{{#if this.userAlias}}{{this.userAlias}}{{else}}{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}</option>
-                {{/each}}
-              {{else if ${targetSingular}}}
-                {{#each ${targetSingular}}}
-                  <option value="{{this._id}}">{{#if this.${disp}}}{{this.${disp}}}{{else}}{{#if this.userAlias}}{{this.userAlias}}{{else}}{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}</option>
-                {{/each}}
-              {{else if @root.${targetPlural}}}
-                {{#each @root.${targetPlural}}}
-                  <option value="{{this._id}}">{{#if this.${disp}}}{{this.${disp}}}{{else}}{{#if this.userAlias}}{{this.userAlias}}{{else}}{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}</option>
-                {{/each}}
-              {{else if @root.${targetSingular}}}
-                {{#each @root.${targetSingular}}}
-                  <option value="{{this._id}}">{{#if this.${disp}}}{{this.${disp}}}{{else}}{{#if this.userAlias}}{{this.userAlias}}{{else}}{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}</option>
-                {{/each}}
-              {{/if}}
+              {{#each @root.${targetPlural}}}
+                <option value="{{this._id}}">{{#if this.${disp}}}{{this.${disp}}}{{else if this.${targetSingular}Name}}{{this.${targetSingular}Name}}{{else if this.name}}{{this.name}}{{else if this.title}}{{this.title}}{{else if this.brandName}}{{this.brandName}}{{else if this.userAlias}}{{this.userAlias}}{{else if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}</option>
+              {{/each}}
             </select>
           </div>`;
 
@@ -3341,31 +3378,11 @@ allEntities.forEach(ent => {
             <label class="form-label fw-semibold">${refLabel}</label>
             <select name="${r.fieldName}" class="form-select" required>
               <option value="">-- Select ${capitalize(targetSingular)} --</option>
-              {{#if ../${targetPlural}}}
-                {{#each ../${targetPlural}}}
-                  <option value="{{this._id}}" {{#if (eq this._id ../${r.fieldName}._id)}}selected{{else}}{{#if (eq this._id ../${r.fieldName})}}selected{{/if}}{{/if}}>
-                    {{#if this.${disp}}}{{this.${disp}}}{{else}}{{#if this.userAlias}}{{this.userAlias}}{{else}}{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}
-                  </option>
-                {{/each}}
-              {{else if ../${targetSingular}}}
-                {{#each ../${targetSingular}}}
-                  <option value="{{this._id}}" {{#if (eq this._id ../${r.fieldName}._id)}}selected{{else}}{{#if (eq this._id ../${r.fieldName})}}selected{{/if}}{{/if}}>
-                    {{#if this.${disp}}}{{this.${disp}}}{{else}}{{#if this.userAlias}}{{this.userAlias}}{{else}}{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}
-                  </option>
-                {{/each}}
-              {{else if @root.${targetPlural}}}
-                {{#each @root.${targetPlural}}}
-                  <option value="{{this._id}}" {{#if (eq this._id ../${r.fieldName}._id)}}selected{{else}}{{#if (eq this._id ../${r.fieldName})}}selected{{/if}}{{/if}}>
-                    {{#if this.${disp}}}{{this.${disp}}}{{else}}{{#if this.userAlias}}{{this.userAlias}}{{else}}{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}
-                  </option>
-                {{/each}}
-              {{else if @root.${targetSingular}}}
-                {{#each @root.${targetSingular}}}
-                  <option value="{{this._id}}" {{#if (eq this._id ../${r.fieldName}._id)}}selected{{else}}{{#if (eq this._id ../${r.fieldName})}}selected{{/if}}{{/if}}>
-                    {{#if this.${disp}}}{{this.${disp}}}{{else}}{{#if this.userAlias}}{{this.userAlias}}{{else}}{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}{{/if}}{{/if}}
-                  </option>
-                {{/each}}
-              {{/if}}
+              {{#each @root.${targetPlural}}}
+                <option value="{{this._id}}" {{#if (eq this._id ../${r.fieldName}._id)}}selected{{else}}{{#if (eq this._id ../${r.fieldName})}}selected{{/if}}{{/if}}>
+                  {{#if this.${disp}}}{{this.${disp}}}{{else if this.${targetSingular}Name}}{{this.${targetSingular}Name}}{{else if this.name}}{{this.name}}{{else if this.title}}{{this.title}}{{else if this.brandName}}{{this.brandName}}{{else if this.userAlias}}{{this.userAlias}}{{else if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}
+                </option>
+              {{/each}}
             </select>
           </div>`;
 
@@ -3418,9 +3435,9 @@ allEntities.forEach(ent => {
 </div>
 `);
 
-  const addModalRefParams = references.map(r => `${pluralizeJs(r.targetEntity)}=${pluralizeJs(r.targetEntity)} ${r.targetEntity}=${pluralizeJs(r.targetEntity)}`).join(' ');
-  const editModalRefParams = references.map(r => `${pluralizeJs(r.targetEntity)}=../${pluralizeJs(r.targetEntity)} ${r.targetEntity}=../${pluralizeJs(r.targetEntity)}`).join(' ');
-  const detailModalRefParams = references.map(r => `${pluralizeJs(r.targetEntity)}=${pluralizeJs(r.targetEntity)} ${r.targetEntity}=${pluralizeJs(r.targetEntity)}`).join(' ');
+  const addModalRefParams = '';
+  const editModalRefParams = '';
+  const detailModalRefParams = '';
 
   let cardsTopActions = '';
   let listTopActions = '';
@@ -3448,7 +3465,7 @@ allEntities.forEach(ent => {
   references.forEach(r => {
     if (isFieldInCard(r.fieldName, r)) {
       const disp = r.displayField || 'name';
-      cardBadges += `<span class="badge bg-info text-dark mb-2 me-1"><i class="bi bi-person"></i> {{this.${r.fieldName}.${disp}}}{{#unless this.${r.fieldName}.${disp}}}{{this.${r.fieldName}.userAlias}}{{this.${r.fieldName}.name}}{{this.${r.fieldName}.title}}{{this.${r.fieldName}.username}}{{/unless}}</span>`;
+      cardBadges += `{{#if this.${r.fieldName}}}<span class="badge bg-info text-dark mb-2 me-1">{{#if this.${r.fieldName}.${disp}}}{{this.${r.fieldName}.${disp}}}{{else if this.${r.fieldName}.${r.targetEntity}Name}}{{this.${r.fieldName}.${r.targetEntity}Name}}{{else if this.${r.fieldName}.name}}{{this.${r.fieldName}.name}}{{else if this.${r.fieldName}.title}}{{this.${r.fieldName}.title}}{{else if this.${r.fieldName}.brandName}}{{this.${r.fieldName}.brandName}}{{else if this.${r.fieldName}.brand}}{{this.${r.fieldName}.brand}}{{else if this.${r.fieldName}.userAlias}}{{this.${r.fieldName}.userAlias}}{{else if this.${r.fieldName}.username}}{{this.${r.fieldName}.username}}{{else}}{{this.${r.fieldName}}}{{/if}}</span>{{/if}}`;
     }
   });
 
@@ -3483,8 +3500,10 @@ allEntities.forEach(ent => {
                 <span class="badge bg-secondary">{{this}}</span>
               {{/each}}
             </div>{{/if}}`;
+    } else if (f.isPercent || f.ui === 'percent' || /^(off|discount|percent)$/i.test(f.name)) {
+      cardMiscHtml += `<div class="d-flex gap-1 align-items-baseline mb-1"><span class="text-muted small text-uppercase fw-semibold" style="min-width:80px">${f.label}</span><span class="fw-bold text-primary small">{{percent this.${f.name}}}</span></div>`;
     } else if (!/^(name|title|username|price|progress|thumbnail|image)$/i.test(f.name)) {
-      cardMiscHtml += `<small class="text-muted d-block">${f.label}: {{this.${f.name}}}</small>`;
+      cardMiscHtml += `<div class="d-flex gap-1 align-items-baseline mb-1"><span class="text-muted small text-uppercase fw-semibold" style="min-width:80px">${f.label}</span><span class="fw-semibold text-dark small text-truncate" style="max-width:160px" title="{{this.${f.name}}}">{{this.${f.name}}}</span></div>`;
     }
   });
 
@@ -3546,7 +3565,10 @@ allEntities.forEach(ent => {
 <div class="row row-cols-1 row-cols-md-3 g-4">
   {{#each items}}
     <div class="col">
-      <div class="card h-100 shadow-sm border-0">
+      <div class="card h-100 shadow-sm border-0 position-relative" style="cursor:pointer; transition: transform .15s, box-shadow .15s;"
+           onmouseenter="this.style.transform='translateY(-3px)';this.style.boxShadow='0 8px 24px rgba(0,0,0,.12)'"
+           onmouseleave="this.style.transform='';this.style.boxShadow=''"
+           onclick="window.location='${pagePath}/{{this._id}}'">
         ${cardImageHtml}
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-start mb-2">
@@ -3555,16 +3577,14 @@ allEntities.forEach(ent => {
           </div>
           ${cardBadges}
           ${cardCategoriesHtml}
-          ${cardMiscHtml}
+          <div class="mt-2">${cardMiscHtml}</div>
           {{#if this.description}}<p class="card-text text-muted small mt-2">{{this.description}}</p>{{/if}}
           ${cardProgressHtml}
         </div>
-        <div class="card-footer bg-transparent border-0 d-flex justify-content-between">
-          <a href="${pagePath}/{{this._id}}" class="btn btn-sm btn-outline-primary">Details</a>
-          <div class="text-nowrap">
-            <button type="button" class="btn btn-sm btn-outline-warning me-1" data-bs-toggle="modal" data-bs-target="#editModal-{{this._id}}">Edit</button>
-            <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteItem('${pagePath}/{{this._id}}', '${pagePath}')">Delete</button>
-          </div>
+        <div class="card-footer bg-transparent border-top-0 d-flex justify-content-end gap-2 pb-3 px-3"
+             onclick="event.stopPropagation()">
+          <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#editModal-{{this._id}}">Edit</button>
+          <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteItem('${pagePath}/{{this._id}}', '${pagePath}')">Delete</button>
         </div>
       </div>
     </div>
@@ -3640,6 +3660,9 @@ allEntities.forEach(ent => {
                 {{/if}}
               </td>`;
     }
+    if (f.isPercent || f.ui === 'percent' || /^(off|discount|percent)$/i.test(f.name)) {
+      return `<td><span class="badge bg-warning text-dark">{{percent this.${f.name}}}</span></td>`;
+    }
     if (f.ui === 'select' || f.ui === 'radio' || (f.enumValues && f.enumValues.length > 0)) {
       return `<td><span class="badge bg-secondary">{{this.${f.name}}}</span></td>`;
     }
@@ -3663,7 +3686,7 @@ allEntities.forEach(ent => {
     tableCells = dynamicTableCells;
     references.forEach(r => {
       const disp = r.displayField || 'name';
-      tableCells += `\n              <td><span class="badge bg-info text-dark">{{this.${r.fieldName}.${disp}}}{{#unless this.${r.fieldName}.${disp}}}{{this.${r.fieldName}.userAlias}}{{this.${r.fieldName}.name}}{{this.${r.fieldName}.title}}{{this.${r.fieldName}.username}}{{/unless}}</span></td>`;
+      tableCells += `\n              <td><span class="badge bg-info text-dark">{{#if this.${r.fieldName}.${disp}}}{{this.${r.fieldName}.${disp}}}{{else if this.${r.fieldName}.${r.targetEntity}Name}}{{this.${r.fieldName}.${r.targetEntity}Name}}{{else if this.${r.fieldName}.name}}{{this.${r.fieldName}.name}}{{else if this.${r.fieldName}.title}}{{this.${r.fieldName}.title}}{{else if this.${r.fieldName}.brandName}}{{this.${r.fieldName}.brandName}}{{else if this.${r.fieldName}.brand}}{{this.${r.fieldName}.brand}}{{else if this.${r.fieldName}.userAlias}}{{this.${r.fieldName}.userAlias}}{{else if this.${r.fieldName}.username}}{{this.${r.fieldName}.username}}{{else}}{{this.${r.fieldName}}}{{/if}}</span></td>`;
     });
   }
 
@@ -3794,9 +3817,9 @@ allEntities.forEach(ent => {
         <div><span class="badge bg-secondary fs-6">{{item.${f.name}}}</span></div>
       </div>`;
     }
-    return `<div class="mb-3">
-        <label class="text-muted small fw-semibold text-uppercase">${f.label}</label>
-        <p class="fs-5 mb-0">{{item.${f.name}}}</p>
+    return `<div class="mb-3 pb-2 border-bottom">
+        <span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>
+        <span class="fw-semibold text-dark">{{item.${f.name}}}</span>
       </div>`;
   }).join('\n      ');
 
@@ -3817,28 +3840,92 @@ allEntities.forEach(ent => {
     });
   }
 
+
+  // Split detailRows into image+badge (left col) and text fields (right col)
+  const hasImgField = fieldsList.some(f => isImageField(f));
+  let detailImgCard = '';
+  if (hasImgField) {
+    const imgF = fieldsList.find(isImageField);
+    const isArr = imgF && (imgF.type === '[Image]' || imgF.type === '[String]');
+    detailImgCard = isArr
+      ? `{{#if item.${imgF.name}}}<div style="height:220px;overflow:hidden;border-radius:8px 8px 0 0;">{{#each item.${imgF.name}}}{{#if @first}}<img src="{{this}}" class="w-100 h-100" style="object-fit:cover;" onerror="this.onerror=null;this.src='https://placehold.co/480x220?text=No+Image';">{{/if}}{{/each}}</div>{{/if}}`
+      : `{{#if item.${imgF ? imgF.name : 'image'}}}<div style="height:220px;overflow:hidden;border-radius:8px 8px 0 0;"><img src="{{item.${imgF ? imgF.name : 'image'}}}" class="w-100 h-100" style="object-fit:cover;" onerror="this.onerror=null;this.src='https://placehold.co/480x220?text=No+Image';"></div>{{/if}}`;
+  }
+  // Badge rows (Boolean, gender, enum) for left card
+  let detailBadgeRows = '';
+  fieldsList.forEach(f => {
+    const isGen = f.ui === 'gender' || /^(gender|sex|ismale)$/i.test(f.name);
+    if (isGen) {
+      detailBadgeRows += `{{#if item.${f.name}}}<span class="badge bg-primary me-1 mb-2">Male</span>{{else}}<span class="badge bg-danger me-1 mb-2">Female</span>{{/if}}`;
+    } else if (f.type === 'Boolean' || f.ui === 'switch') {
+      detailBadgeRows += `{{#if item.${f.name}}}<span class="badge bg-success me-1 mb-2">${f.label} ✓</span>{{else}}<span class="badge bg-secondary me-1 mb-2">No ${f.label}</span>{{/if}}`;
+    } else if (f.ui === 'select' || (f.enumValues && f.enumValues.length > 0)) {
+      detailBadgeRows += `{{#if item.${f.name}}}<span class="badge bg-secondary me-1 mb-2">{{item.${f.name}}}</span>{{/if}}`;
+    }
+  });
+  // Text/number/date/image rows for right card (skip booleans, gender, enum already in badges)
+  let detailTextRows = ent.isManager
+    ? `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${capitalize(config.manager.userField)}</span><span class="fw-semibold text-dark">{{item.${config.manager.userField}}}</span></div>`
+    : '';
+  fieldsList.forEach(f => {
+    const isGen = f.ui === 'gender' || /^(gender|sex|ismale)$/i.test(f.name);
+    if (isGen || f.type === 'Boolean' || f.ui === 'switch' || f.ui === 'select' || (f.enumValues && f.enumValues.length > 0)) return;
+    if (isImageField(f)) {
+      const isArrI = f.type === '[Image]' || f.type === '[String]';
+      detailTextRows += isArrI
+        ? `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>{{#if item.${f.name}}}<div class="d-flex gap-2 flex-wrap mt-1">{{#each item.${f.name}}}<a href="{{this}}" target="_blank"><img src="{{this}}" class="img-thumbnail" style="width:80px;height:80px;object-fit:cover;" onerror="this.onerror=null;this.src='https://placehold.co/80x80?text=Err';"></a>{{/each}}</div>{{else}}<span class="text-muted small">No image</span>{{/if}}</div>`
+        : `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>{{#if item.${f.name}}}<a href="{{item.${f.name}}}" target="_blank"><img src="{{item.${f.name}}}" class="img-thumbnail mt-1" style="width:{{@root.uiConfig.IMAGE.DETAIL.WIDTH}}px;height:{{@root.uiConfig.IMAGE.DETAIL.HEIGHT}}px;object-fit:{{@root.uiConfig.IMAGE.DETAIL.FIT}};" onerror="this.onerror=null;this.src='https://placehold.co/260x260?text=No+Image';"></a>{{else}}<span class="text-muted small">No image</span>{{/if}}</div>`;
+      return;
+    }
+    if (f.ui === 'progress') {
+      detailTextRows += `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span><div class="d-flex align-items-center gap-2 mt-1"><div class="progress flex-grow-1" style="height:8px;"><div class="progress-bar bg-success" style="width:calc({{item.${f.name}}}*100%);"></div></div><span class="fw-bold small">{{percent item.${f.name}}}</span></div></div>`;
+      return;
+    }
+    if (f.isPercent || f.ui === 'percent' || /^(off|discount|percent)$/i.test(f.name)) {
+      detailTextRows += `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span><span class="fw-bold text-primary fs-5">{{percent item.${f.name}}}</span></div>`;
+      return;
+    }
+    detailTextRows += `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span><span class="fw-semibold text-dark">{{item.${f.name}}}</span></div>`;
+  });
+  if (!ent.isManager) {
+    references.forEach(r => {
+      const disp = r.displayField || 'name';
+      detailTextRows += `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${capitalize(r.fieldName)}</span>{{#if item.${r.fieldName}}}<span class="badge bg-info text-dark fs-6">{{#if item.${r.fieldName}.${disp}}}{{item.${r.fieldName}.${disp}}}{{else if item.${r.fieldName}.${r.targetEntity}Name}}{{item.${r.fieldName}.${r.targetEntity}Name}}{{else if item.${r.fieldName}.name}}{{item.${r.fieldName}.name}}{{else if item.${r.fieldName}.title}}{{item.${r.fieldName}.title}}{{else if item.${r.fieldName}.brandName}}{{item.${r.fieldName}.brandName}}{{else if item.${r.fieldName}.brand}}{{item.${r.fieldName}.brand}}{{else if item.${r.fieldName}.userAlias}}{{item.${r.fieldName}.userAlias}}{{else if item.${r.fieldName}.username}}{{item.${r.fieldName}.username}}{{else}}{{item.${r.fieldName}}}{{/if}}</span>{{else}}<span class="text-muted small">None</span>{{/if}}</div>`;
+    });
+  }
+
   fs.writeFileSync(`${edir}/detail.hbs`, `{{> header}}
-<div class="card shadow-sm border-0 mx-auto my-4" style="max-width: 680px;">
-  <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center py-3">
-    <h4 class="mb-0 fw-bold">{{#if item.name}}{{item.name}}{{else}}{{#if item.title}}{{item.title}}{{else}}{{#if item.username}}{{item.username}}{{else}}Record Details{{/if}}{{/if}}{{/if}}</h4>
-    {{#if item.price}}<span class="badge bg-light text-dark fs-6">\${{item.price}}</span>{{/if}}
-  </div>
-  <div class="card-body p-4">
-      ${detailRows}
-    <div class="mb-3">
-      <label class="text-muted small fw-semibold text-uppercase">Record ID</label>
-      <p class="text-muted font-monospace small mb-0">{{item._id}}</p>
+<div class="container-fluid px-3 px-md-4 my-4">
+  <div class="row g-4" style="max-width:960px; margin:0 auto;">
+    <div class="col-12 col-md-5">
+      <div class="card shadow-sm border-0 h-100">
+        ${detailImgCard}
+        <div class="card-body p-4">
+          <h4 class="fw-bold mb-1">{{#if item.name}}{{item.name}}{{else}}{{#if item.title}}{{item.title}}{{else}}{{#if item.username}}{{item.username}}{{else}}—{{/if}}{{/if}}{{/if}}</h4>
+          {{#if item.price}}<span class="badge bg-primary fs-6 mb-2">\\${{item.price}}</span>{{/if}}
+          <hr class="my-2">
+          ${detailBadgeRows}
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="card-footer bg-light d-flex justify-content-between p-3">
-    <a href="${pagePath}" class="btn btn-outline-secondary">&larr; Back to List</a>
-    <div>
-      <button type="button" class="btn btn-warning me-2" data-bs-toggle="modal" data-bs-target="#editModal-{{item._id}}">Edit</button>
-      <button type="button" class="btn btn-danger" onclick="deleteItem('${pagePath}/{{item._id}}', '${pagePath}')">Delete</button>
+    <div class="col-12 col-md-7 d-flex flex-column gap-3">
+      <div class="card shadow-sm border-0">
+        <div class="card-body p-4">
+          ${detailTextRows}
+          <div class="mt-3 pt-2 border-top">
+            <span class="text-muted small text-uppercase fw-semibold d-block">Record ID</span>
+            <code class="text-muted small">{{item._id}}</code>
+          </div>
+        </div>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="${pagePath}" class="btn btn-outline-secondary">&larr; Back</a>
+        <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#editModal-{{item._id}}">Edit</button>
+        <button type="button" class="btn btn-danger" onclick="deleteItem('${pagePath}/{{item._id}}', '${pagePath}')">Delete</button>
+      </div>
     </div>
   </div>
 </div>
-
 {{> ${ent.name}EditModal item ${detailModalRefParams}}}
 {{> footer}}
 `);
@@ -3898,11 +3985,10 @@ async function executeDelete(url, redirectUrl) {
     });
     const result = await response.json().catch(() => ({}));
     if (response.ok && result.success !== false) {
-      if (redirectUrl && redirectUrl !== window.location.pathname) {
-        window.location.href = redirectUrl;
-      } else {
-        window.location.reload();
-      }
+      const msg = encodeURIComponent(result.message || 'Deleted successfully');
+      const targetUrl = (redirectUrl && redirectUrl !== window.location.pathname) ? redirectUrl : window.location.pathname;
+      const sep = targetUrl.includes('?') ? '&' : '?';
+      window.location.href = targetUrl + sep + 'msg=' + msg;
     } else {
       alert(result.message || 'Delete operation failed.');
     }
@@ -4086,14 +4172,14 @@ app.use((req, res, next) => {
   res.locals.routes = routes;
   res.locals.uiConfig = uiConfig;
   res.locals.authMode = '${config.authMode || "session"}';
-
-  ${config.authMode === 'session' ? `res.locals.currentUser = (req.session && req.session.user) ? req.session.user : null;
-  res.locals.success_msg = req.session ? req.session.success_msg : null;
-  res.locals.error_msg = req.session ? req.session.error_msg : null;
+  res.locals.success_msg = (req.query && req.query.msg) || (req.session && req.session.success_msg) || null;
+  res.locals.error_msg = (req.query && (req.query.error || req.query.err)) || (req.session && req.session.error_msg) || null;
   if (req.session) {
     delete req.session.success_msg;
     delete req.session.error_msg;
-  }` : (config.authMode === 'jwt_cookie' ? `const token = req.cookies && req.cookies[authConstants.COOKIE_NAME];
+  }
+
+  ${config.authMode === 'session' ? `res.locals.currentUser = (req.session && req.session.user) ? req.session.user : null;` : (config.authMode === 'jwt_cookie' ? `const token = req.cookies && req.cookies[authConstants.COOKIE_NAME];
   if (token) {
     try {
       res.locals.currentUser = require('jsonwebtoken').verify(token, process.env.JWT_SECRET || 'SE190703');
@@ -4245,16 +4331,16 @@ async function runProvisioning() {
   const mgrCount = await mgrCol.countDocuments();
   if (mgrCount === 0) {
     const bcrypt = require('bcryptjs');
+    const seedUserValue = process.env.MGR_USER_VALUE;
+    const seedPassValue = process.env.MGR_PASS_VALUE;
     const defaultUser = {
-      [config.manager.userField]: 'admin',
-      [config.manager.passField]: bcrypt.hashSync('123456', 10),
-      role: 'admin',
-      fullName: 'System Administrator',
+      [config.manager.userField]: seedUserValue,
+      [config.manager.passField]: bcrypt.hashSync(seedPassValue, 10),
       createdAt: new Date(),
       updatedAt: new Date()
     };
     await mgrCol.insertOne(defaultUser);
-    console.log("✓ Created initial admin account: admin / 123456 in collection '" + config.manager.col + "'");
+    console.log("✓ Created initial account: " + config.manager.userField + "=" + seedUserValue + " in collection '" + config.manager.col + "'");
   }
 
   await mongoose.disconnect();

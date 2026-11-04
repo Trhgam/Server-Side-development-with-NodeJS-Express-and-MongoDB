@@ -1952,7 +1952,7 @@ html&gt;body{padding:0}&lt;/style&gt;
       const dslEditor = root.querySelector(&#x27;#dsl-editor&#x27;);
       const schemaEditor = root.querySelector(&#x27;#schema-editor&#x27;);
       const status = root.querySelector(&#x27;#builder-status&#x27;);
-      const typeOptions = [&#x27;String&#x27;, &#x27;Number&#x27;, &#x27;Boolean&#x27;, &#x27;Date&#x27;, &#x27;[String]&#x27;, &#x27;Image&#x27;, &#x27;[Image]&#x27;, &#x27;Gender&#x27;, &#x27;Progress&#x27;];
+      const typeOptions = [&#x27;String&#x27;, &#x27;Number&#x27;, &#x27;Boolean&#x27;, &#x27;Date&#x27;, &#x27;[String]&#x27;, &#x27;Image&#x27;, &#x27;[Image]&#x27;, &#x27;Gender&#x27;, &#x27;Progress&#x27;, &#x27;Percent&#x27;];
       let idSeed = 20;
       let applyingEditor = false;
       let editTimer = null;
@@ -1999,8 +1999,9 @@ html&gt;body{padding:0}&lt;/style&gt;
         if (field.kind === 'reference') return ['select'];
         if (field.type === 'Gender') return ['select', 'radio', 'gender'];
         if (field.type === 'Progress') return ['progress', 'number', 'range'];
+        if (field.type === 'Percent') return ['percent', 'number', 'range'];
         if (field.type === 'Boolean') return ['switch', 'checkbox', 'select', 'radio', 'gender'];
-        if (field.type === 'Number') return ['number', 'range', 'progress'];
+        if (field.type === 'Number') return ['number', 'percent', 'range', 'progress'];
         if (field.type === 'Date') return ['date'];
         if (field.type === 'Image' || field.type === '[Image]') return ['image'];
         if (field.type === '[String]') return ['comma-list', 'image'];
@@ -2017,7 +2018,7 @@ html&gt;body{padding:0}&lt;/style&gt;
               &lt;/select&gt;
             &lt;/label&gt;`;
         }
-        if (field.type === &#x27;Progress&#x27; || field.ui === &#x27;progress&#x27;) {
+        if (field.type === &#x27;Progress&#x27; || field.ui === &#x27;progress&#x27; || field.type === &#x27;Percent&#x27; || field.ui === &#x27;percent&#x27;) {
           return `
             &lt;label&gt;
               &lt;span class=&quot;form-label&quot;&gt;Min&lt;/span&gt;
@@ -2272,7 +2273,7 @@ html&gt;body{padding:0}&lt;/style&gt;
               if (mType === &#x27;Image&#x27;) mType = &#x27;String&#x27;;
               else if (mType === &#x27;[Image]&#x27;) mType = &#x27;[String]&#x27;;
               else if (mType === &#x27;Gender&#x27;) mType = &#x27;Boolean&#x27;;
-              else if (mType === &#x27;Progress&#x27;) mType = &#x27;Number&#x27;;
+              else if (mType === &#x27;Progress&#x27; || mType === &#x27;Percent&#x27;) mType = &#x27;Number&#x27;;
               opts.push(`type: ${mType}`);
               if (field.enum && field.enum.length > 0) {
                 opts.push(`enum: [${field.enum.map(v => `&#x27;${v}&#x27;`).join(&#x27;, &#x27;)}]`);
@@ -2326,6 +2327,7 @@ html&gt;body{padding:0}&lt;/style&gt;
             let isDslImage = false;
             let isDslGender = false;
             let isDslProgress = false;
+            let isDslPercent = false;
             let dslEnum = [];
 
             if (/^image$/i.test(type)) {
@@ -2340,6 +2342,9 @@ html&gt;body{padding:0}&lt;/style&gt;
             } else if (/^progress$/i.test(type)) {
               type = &#x27;Number&#x27;;
               isDslProgress = true;
+            } else if (/^(percent|pct)$/i.test(type)) {
+              type = &#x27;Number&#x27;;
+              isDslPercent = true;
             }
             const optionMap = {};
             const flags = new Set();
@@ -2376,7 +2381,7 @@ html&gt;body{padding:0}&lt;/style&gt;
                 trim: flags.has(&#x27;trim&#x27;),
                 lowercase: flags.has(&#x27;lowercase&#x27;),
                 uppercase: flags.has(&#x27;uppercase&#x27;),
-                ui: optionMap.ui || (dslEnum.length ? &#x27;select&#x27; : (isDslImage || flags.has(&#x27;image&#x27;) || flags.has(&#x27;img&#x27;) ? &#x27;image&#x27; : (isDslGender ? 'select' : (isDslProgress ? &#x27;progress&#x27; : defaultUi(type))))),
+                ui: optionMap.ui || (dslEnum.length ? &#x27;select&#x27; : (isDslImage || flags.has(&#x27;image&#x27;) || flags.has(&#x27;img&#x27;) ? &#x27;image&#x27; : (isDslGender ? 'select' : (isDslProgress ? &#x27;progress&#x27; : (isDslPercent || flags.has(&#x27;percent&#x27;) || flags.has(&#x27;pct&#x27;) ? &#x27;percent&#x27; : defaultUi(type)))))),
                 enum: optionMap.enum || (dslEnum.length ? dslEnum.join(&#x27;, &#x27;) : &#x27;&#x27;),
                 defaultValue: optionMap.default ?? &#x27;&#x27;,
                 min: optionMap.min ?? &#x27;&#x27;,
@@ -2393,6 +2398,7 @@ html&gt;body{padding:0}&lt;/style&gt;
       function defaultUi(type) {
         if (type === 'Gender') return 'select';
         if (type === &#x27;Progress&#x27;) return &#x27;progress&#x27;;
+        if (type === &#x27;Percent&#x27;) return &#x27;percent&#x27;;
         if (type === &#x27;Boolean&#x27;) return &#x27;switch&#x27;;
         if (type === &#x27;Number&#x27;) return &#x27;number&#x27;;
         if (type === &#x27;Date&#x27;) return &#x27;date&#x27;;
