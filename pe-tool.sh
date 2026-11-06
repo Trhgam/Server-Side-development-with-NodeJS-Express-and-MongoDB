@@ -215,6 +215,7 @@ parse_dsl_to_json() {
         });
 
         const inCard = flags.has("card") || flags.has("incard");
+        const isTitle = flags.has("title") || flags.has("istitle") || flags.has("primary");
         const inJwt = flags.has("jwt") || flags.has("injwt") || flags.has("token");
         const isPercent = flags.has("percent") || flags.has("pct") || optionMap.ui === "percent";
         const isAlpha = flags.has("alpha") || flags.has("letters");
@@ -241,7 +242,8 @@ parse_dsl_to_json() {
             type: relType,
             displayField: display,
             required: flags.has("required") || flags.has("req"),
-            inCard: inCard
+            inCard: inCard,
+            isTitle: isTitle
           });
         } else {
           let fType = typeToken;
@@ -257,6 +259,7 @@ parse_dsl_to_json() {
             required: flags.has("required") || flags.has("req"),
             unique: flags.has("unique"),
             inCard: inCard,
+            isTitle: isTitle,
             inJwt: inJwt,
             isPercent: isPercent,
             alpha: isAlpha,
@@ -315,6 +318,7 @@ print_schema_preview() {
     if (f.defaultValue !== undefined && f.defaultValue !== "") def.default = f.defaultValue;
     if (f.ui && f.ui !== "text") def.ui = f.ui;
     if (f.inCard) def.inCard = true;
+    if (f.isTitle) def.isTitle = true;
     if (f.inJwt) def.inJwt = true;
     schemaObj[f.name] = def;
   });
@@ -1048,6 +1052,7 @@ function parseFields(fieldInput) {
         enumValues,
         ui,
         inCard: !!f.inCard || !!f.card,
+        isTitle: !!f.isTitle || !!f.title || !!f.primary,
         inJwt: !!f.inJwt || !!f.jwt,
         isPercent: !!f.isPercent || f.ui === 'percent' || !!f.percent,
         displayField: f.displayField || '',
@@ -1089,7 +1094,7 @@ function parseFields(fieldInput) {
           let isNewField = false;
           if (colIdx !== -1) {
             const after = firstSegment.slice(colIdx + 1).trim().toLowerCase();
-            const flagsPattern = /^(ui|req|required|unique|card|incard|jwt|injwt|token|percent|pct|min|max|default|enum|options|trim|lowercase|uppercase)=?/;
+            const flagsPattern = /^(ui|req|required|unique|card|incard|title|istitle|primary|jwt|injwt|token|percent|pct|min|max|default|enum|options|trim|lowercase|uppercase)=?/;
             if (!flagsPattern.test(after)) {
               if (/^(string|number|boolean|date|image|\[|gender|progress|objectid)/i.test(after) || /^[A-Z]/.test(firstSegment.slice(colIdx + 1).trim())) {
                 isNewField = true;
@@ -1205,6 +1210,7 @@ function parseFields(fieldInput) {
       enumValues,
       ui,
       inCard: flagsLower.includes('card') || flagsLower.includes('incard'),
+      isTitle: flagsLower.includes('title') || flagsLower.includes('istitle') || flagsLower.includes('primary'),
       inJwt: flagsLower.includes('jwt') || flagsLower.includes('injwt') || flagsLower.includes('token'),
       isPercent: flagsLower.includes('percent') || flagsLower.includes('pct') || uiExplicit === 'percent',
       label: capitalize(name),
@@ -1331,6 +1337,22 @@ config.dependentEntities.forEach(ent => {
   }
 });
 
+// Clean up ent.fields so fields that are references (e.g. brand:ObjectId) do not collide with references array
+function filterOutReferenceFields(ent) {
+  if (!ent.fields || !Array.isArray(ent.fields)) return;
+  const refNames = (ent.references || []).map(r => String(r.fieldName || '').toLowerCase());
+  ent.fields = ent.fields.filter(f => {
+    const fname = (typeof f === 'string' ? f.split(':')[0].trim() : (f.name || '')).toLowerCase();
+    const ftype = (typeof f === 'string' ? (f.split(':')[1] || '').trim() : (f.type || '')).toLowerCase();
+    if (refNames.includes(fname)) return false;
+    if (ftype === 'objectid' || (typeof f === 'object' && f.ref)) return false;
+    return true;
+  });
+}
+
+allEntities.forEach(filterOutReferenceFields);
+config.dependentEntities.forEach(filterOutReferenceFields);
+
 const visibleEntities = allEntities.filter(e => e.viewType !== 'none');
 const defaultEntity = visibleEntities.length > 0
   ? (visibleEntities.find(e => !e.isManager) || visibleEntities[0])
@@ -1349,8 +1371,14 @@ function generateSchemaFieldLines(f) {
   if (f.lowercase) lines.push('    lowercase: true');
   if (f.uppercase) lines.push('    uppercase: true');
   if (f.unique) lines.push('    unique: true');
-  if (f.min !== undefined && f.min !== '') lines.push(`    min: ${f.min}`);
-  if (f.max !== undefined && f.max !== '') lines.push(`    max: ${f.max}`);
+  if (f.min !== undefined && f.min !== '') {
+    if (typeStr === 'String') lines.push(`    minlength: ${f.min}`);
+    else lines.push(`    min: ${f.min}`);
+  }
+  if (f.max !== undefined && f.max !== '') {
+    if (typeStr === 'String') lines.push(`    maxlength: ${f.max}`);
+    else lines.push(`    max: ${f.max}`);
+  }
   if (f.enumValues && f.enumValues.length > 0 && typeStr === 'String') {
     lines.push(`    enum: [${f.enumValues.map(v => `'${v}'`).join(', ')}]`);
   }
@@ -1415,7 +1443,7 @@ config.dependentEntities.forEach(ent => {
     const refCodes = ent.references.map(r => `  ${r.fieldName}: {
     type: mongoose.Schema.Types.ObjectId,
     ref: '${capitalize(r.targetEntity)}',
-    required: true${r.type === '1:1' ? ',\n    unique: true' : ''}
+    required: ${r.required ? 'true' : 'false'}${r.type === '1:1' ? ',\n    unique: true' : ''}
   }`).join(',\n');
     fieldsCode += (fieldsCode ? ',\n' : '') + refCodes;
   }
@@ -1712,7 +1740,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'SE190703';
 
 module.exports = function authPage(req, res, next) {
   const token = (req.cookies && req.cookies[authConstants.COOKIE_NAME]) ||
-                (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') && req.headers.authorization.split(' ')[1]);
+                (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') && req.headers.authorization.split(' ')[1]) ||
+                req.headers['access_key'] ||
+                req.headers['token'] ||
+                req.headers['x-access-token'] ||
+                req.headers.authorization;
   if (!token) {
     return res.redirect(routes.AUTH.LOGIN);
   }
@@ -1740,7 +1772,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'SE190703';
 
 module.exports = function authPage(req, res, next) {
   const token = (req.cookies && req.cookies[authConstants.COOKIE_NAME]) ||
-                (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') && req.headers.authorization.split(' ')[1]);
+                (req.headers.authorization && req.headers.authorization.startsWith('Bearer ') && req.headers.authorization.split(' ')[1]) ||
+                req.headers['access_key'] ||
+                req.headers['token'] ||
+                req.headers['x-access-token'] ||
+                req.headers.authorization;
 
   if (!token) {
     return res.redirect(routes.AUTH.LOGIN);
@@ -1775,6 +1811,16 @@ module.exports = function authJWT(req, res, next) {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.split(' ')[1];
+  } else if (req.headers['access_key']) {
+    token = req.headers['access_key'];
+  } else if (req.headers['access-key']) {
+    token = req.headers['access-key'];
+  } else if (req.headers['token']) {
+    token = req.headers['token'];
+  } else if (req.headers['x-access-token']) {
+    token = req.headers['x-access-token'];
+  } else if (authHeader) {
+    token = authHeader;
   } else if (req.cookies && req.cookies[authConstants.COOKIE_NAME]) {
     token = req.cookies[authConstants.COOKIE_NAME];
   }
@@ -1782,7 +1828,7 @@ module.exports = function authJWT(req, res, next) {
   if (!token) {
     return res.status(401).json({
       success: false,
-      message: 'Access denied: Bearer token required'
+      message: 'Access denied: Token required (Bearer or access_key header)'
     });
   }
   try {
@@ -1790,7 +1836,7 @@ module.exports = function authJWT(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
-    return res.status(403).json({
+    return res.status(401).json({
       success: false,
       message: 'Invalid or expired token'
     });
@@ -1801,12 +1847,22 @@ module.exports = function authJWT(req, res, next) {
 // Central Error Handler
 fs.writeFileSync('middlewares/errorHandler.js', `module.exports = function errorHandler(err, req, res, next) {
   const status = err.status || 500;
-  const isApi = req.path.startsWith('/v1/') || (req.headers.accept && req.headers.accept.includes('application/json'));
+  const url = req.originalUrl || req.url || req.path || '';
+
+  const isApi =
+    url.startsWith('/v1/') ||
+    url.startsWith('/api') ||
+    url.includes('/tokens') ||
+    url.includes('/auth/') ||
+    (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) ||
+    (req.headers.accept && req.headers.accept.includes('application/json')) ||
+    Boolean(req.headers.authorization || req.headers['access_key'] || req.headers['access-key'] || req.headers['token']) ||
+    Boolean(req.xhr);
 
   if (isApi) {
     return res.status(status).json({
       success: false,
-      message: err.message || 'Internal Server Error'
+      message: err.message || (status === 404 ? 'Resource not found' : 'Internal Server Error')
     });
   }
 
@@ -1862,10 +1918,20 @@ const validators = {
     return !isNaN(num) && num <= max;
   },
 
-  // 5. URL check (Image/thumbnail)
+  // 5. URL check (Web URLs)
   isValidUrl(value) {
     if (!value) return false;
     return /^https?:\\/\\/.+/i.test(String(value).trim());
+  },
+
+  // 5b. Image check (Allows web URLs, local relative paths, or image filenames)
+  isValidImage(value) {
+    if (!value) return false;
+    const str = String(value).trim();
+    if (/^https?:\\/\\/.+/i.test(str)) return true;
+    if (/\\.(jpg|jpeg|png|gif|webp|svg|bmp)(\\?.*)?$/i.test(str)) return true;
+    if (str.startsWith('/') || str.startsWith('./') || str.startsWith('../') || str.includes('images/') || str.includes('img/')) return true;
+    return false;
   },
 
   // 6. Vietnam Phone check (10 digits starting with 0)
@@ -1953,7 +2019,7 @@ module.exports = {
 allEntities.forEach(ent => {
   const cap = capitalize(ent.name);
   const capPlural = capitalize(pluralizeJs(ent.name));
-  const fields = ent.isManager ? [] : parseFields(ent.fields);
+  const fields = parseFields(ent.fields || []);
   const references = ent.references || [];
 
   const booleanFieldNames = fields.filter(f => f.type === 'Boolean').map(f => f.name);
@@ -2048,13 +2114,38 @@ allEntities.forEach(ent => {
     throw err;
   }`;
     }
-    if (f.isUrl || f.ui === 'url' || f.ui === 'image' || f.type === 'Image') {
+    if (f.ui === 'image' || f.type === 'Image') {
+      fieldValidationsCode += `
+  if (data['${f.name}'] && typeof data['${f.name}'] === 'string' && !validators.isValidImage(data['${f.name}'])) {
+    const err = new Error(MESSAGES.INVALID_URL('${f.label}'));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+    } else if (f.isUrl || f.ui === 'url') {
       fieldValidationsCode += `
   if (data['${f.name}'] && typeof data['${f.name}'] === 'string' && !validators.isValidUrl(data['${f.name}'])) {
     const err = new Error(MESSAGES.INVALID_URL('${f.label}'));
     err.status = STATUS.BAD_REQUEST;
     throw err;
   }`;
+    }
+    if (f.type === 'String') {
+      if (f.min !== undefined && f.min !== '' && !isNaN(f.min)) {
+        fieldValidationsCode += `
+  if (data['${f.name}'] && typeof data['${f.name}'] === 'string' && data['${f.name}'].trim().length < ${f.min}) {
+    const err = new Error(MESSAGES.MIN_NUMBER('${f.label} length', ${f.min}));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+      }
+      if (f.max !== undefined && f.max !== '' && !isNaN(f.max)) {
+        fieldValidationsCode += `
+  if (data['${f.name}'] && typeof data['${f.name}'] === 'string' && data['${f.name}'].trim().length > ${f.max}) {
+    const err = new Error(MESSAGES.MAX_NUMBER('${f.label} length', ${f.max}));
+    err.status = STATUS.BAD_REQUEST;
+    throw err;
+  }`;
+      }
     }
     if (f.type === 'Number') {
       if (f.positive) {
@@ -2140,7 +2231,7 @@ allEntities.forEach(ent => {
   }`;
   });
 
-  const serviceCode = `const ${ent.isManager ? "bcrypt = require('bcryptjs');\n" : ''}repo = require('../repositories/${ent.name}Repository');
+  const serviceCode = `${ent.isManager ? "const bcrypt = require('bcryptjs');\n" : ''}const repo = require('../repositories/${ent.name}Repository');
 const validators = require('../utils/validators');
 const errors = require('../utils/constants/errors');
 const { STATUS, MESSAGES } = errors;
@@ -2551,6 +2642,13 @@ allEntities.forEach(ent => {
   const cap = capitalize(ent.name);
   const capPlural = capitalize(pluralizeJs(ent.name));
   const pagePath = `/admin/${ent.col}`;
+  const entFields = parseFields(ent.fields || []);
+  const titleField = entFields.find(f => f.isTitle)
+    || entFields.find(f => f.name.toLowerCase() === (ent.name + 'name').toLowerCase())
+    || entFields.find(f => /^(name|title|username|fullname|label|code)$/i.test(f.name))
+    || entFields.find(f => f.type === 'String' && /name|title|alias|label|code/i.test(f.name))
+    || entFields.find(f => f.type === 'String');
+  const titleProp = titleField ? titleField.name : 'name';
 
   const ctrlCode = `const ${ent.name}Service = require('../services/${ent.name}Service');
 
@@ -2580,7 +2678,7 @@ async function renderDetail(req, res, next) {
     const item = await ${ent.name}Service.get${cap}ById(req.params.id);
     const refData = await ${ent.name}Service.getRefData();
     res.render('${ent.name}/detail', {
-      title: item.name || item.title || item.username || '${cap} Detail',
+      title: item.${titleProp} || item.name || item.title || item.username || '${cap} Detail',
       item,
       ...refData
     });
@@ -2598,50 +2696,62 @@ async function renderDetail(req, res, next) {
 async function create(req, res, next) {
   try {
     await ${ent.name}Service.create${cap}(req.body);
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.success_msg = '${cap} created successfully';
     }
-    res.redirect('${pagePath}?msg=' + encodeURIComponent('${cap} created successfully'));
+    res.redirect('${pagePath}');` : `if (req.session) {
+      req.session.success_msg = '${cap} created successfully';
+    }
+    res.redirect('${pagePath}?msg=' + encodeURIComponent('${cap} created successfully'));`}
   } catch (err) {
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.error_msg = err.message;
     }
-    res.redirect('${pagePath}?error=' + encodeURIComponent(err.message));
+    res.redirect('${pagePath}');` : `if (req.session) {
+      req.session.error_msg = err.message;
+    }
+    res.redirect('${pagePath}?error=' + encodeURIComponent(err.message));`}
   }
 }
 
 async function update(req, res, next) {
   try {
     await ${ent.name}Service.update${cap}(req.params.id, req.body);
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.success_msg = '${cap} updated successfully';
     }
-    res.redirect('${pagePath}?msg=' + encodeURIComponent('${cap} updated successfully'));
+    res.redirect('${pagePath}');` : `if (req.session) {
+      req.session.success_msg = '${cap} updated successfully';
+    }
+    res.redirect('${pagePath}?msg=' + encodeURIComponent('${cap} updated successfully'));`}
   } catch (err) {
-    if (req.session) {
+    ${config.authMode === 'session' ? `if (req.session) {
       req.session.error_msg = err.message;
     }
-    res.redirect('${pagePath}?error=' + encodeURIComponent(err.message));
+    res.redirect('${pagePath}');` : `if (req.session) {
+      req.session.error_msg = err.message;
+    }
+    res.redirect('${pagePath}?error=' + encodeURIComponent(err.message));`}
   }
 }
 
 async function deleteRecord(req, res, next) {
   try {
     await ${ent.name}Service.delete${cap}(req.params.id);
-    if (req.method === 'DELETE' || (req.headers.accept && req.headers.accept.includes('application/json'))) {
-      return res.json({ success: true, message: '${cap} deleted successfully' });
-    }
     ${config.authMode === 'session' ? `if (req.session) {
       req.session.success_msg = '${cap} deleted successfully';
     }` : ''}
+    if (req.method === 'DELETE' || (req.headers.accept && req.headers.accept.includes('application/json'))) {
+      return res.json({ success: true, message: '${cap} deleted successfully' });
+    }
     res.redirect('${pagePath}');
   } catch (err) {
-    if (req.method === 'DELETE' || (req.headers.accept && req.headers.accept.includes('application/json'))) {
-      return res.status(err.status || 400).json({ success: false, message: err.message });
-    }
     ${config.authMode === 'session' ? `if (req.session) {
       req.session.error_msg = err.message;
     }` : ''}
+    if (req.method === 'DELETE' || (req.headers.accept && req.headers.accept.includes('application/json'))) {
+      return res.status(err.status || 400).json({ success: false, message: err.message });
+    }
     res.redirect('${pagePath}');
   }
 }
@@ -2737,22 +2847,23 @@ module.exports = router;
 
 // Entity Page & API Routes
 allEntities.forEach(ent => {
-  const isBoth = ent.viewType === 'both';
-  const isCard = ent.viewType === 'card';
-  const defaultAction = isCard ? 'renderCards' : (isBoth ? 'renderCards' : 'renderList');
+  if (ent.viewType !== 'none') {
+    const isBoth = ent.viewType === 'both';
+    const isCard = ent.viewType === 'card';
+    const defaultAction = isCard ? 'renderCards' : (isBoth ? 'renderCards' : 'renderList');
 
-  let pageSubRoutes = `router.get('/', ${defaultAction});\n`;
-  if (isBoth) {
-    pageSubRoutes += `router.get('/cards', renderCards);\n`;
-    pageSubRoutes += `router.get('/list', renderList);\n`;
-  } else if (isCard) {
-    pageSubRoutes += `router.get('/cards', renderCards);\n`;
-  } else {
-    pageSubRoutes += `router.get('/list', renderList);\n`;
-  }
+    let pageSubRoutes = `router.get('/', ${defaultAction});\n`;
+    if (isBoth) {
+      pageSubRoutes += `router.get('/cards', renderCards);\n`;
+      pageSubRoutes += `router.get('/list', renderList);\n`;
+    } else if (isCard) {
+      pageSubRoutes += `router.get('/cards', renderCards);\n`;
+    } else {
+      pageSubRoutes += `router.get('/list', renderList);\n`;
+    }
 
-  // routes/${ent.col}.page.js (UI Page Router, Session Protected)
-  const pageRouteCode = `const express = require('express');
+    // routes/${ent.col}.page.js (UI Page Router, Session Protected)
+    const pageRouteCode = `const express = require('express');
 const router = express.Router();
 const authPage = require('../middlewares/authPage');
 const {
@@ -2774,7 +2885,8 @@ router.delete('/:id', deleteRecord);
 
 module.exports = router;
 `;
-  fs.writeFileSync(`routes/${ent.col}.page.js`, pageRouteCode);
+    fs.writeFileSync(`routes/${ent.col}.page.js`, pageRouteCode);
+  }
 
   // routes/${ent.col}.api.js (REST API Router, JWT Protected)
   const apiRouteCode = `const express = require('express');
@@ -2813,6 +2925,7 @@ const authRouter = require('./auth');
 
 let indexMounts = `// Auth Routes (Session UI Login & REST API Token)
 router.use('/auth', authRouter);
+router.use('/', authRouter);
 
 // REST API Routes (JWT Bearer Token Protected)
 `;
@@ -2824,6 +2937,7 @@ allEntities.forEach(ent => {
 
 indexMounts += `\n// Web Page Routes (Session Protected)\n`;
 allEntities.forEach(ent => {
+  if (ent.viewType === 'none') return;
   indexRequires += `const ${ent.name}PageRouter = require('./${ent.col}.page');\n`;
   indexMounts += `router.use('/admin/${ent.col}', ${ent.name}PageRouter);\n`;
   // Backward compatibility: also support direct /${ent.col}
@@ -2833,11 +2947,12 @@ allEntities.forEach(ent => {
 indexMounts += `
 // Home route redirect
 router.get('/', (req, res) => {
-  ${config.authMode === 'session' ? `if (req.session && req.session.user) {
+  if (req.session && req.session.user) {
     return res.redirect(routes.AFTER_LOGIN);
-  }` : `if (req.cookies && req.cookies[authConstants.COOKIE_NAME]) {
+  }
+  ${config.authMode !== 'session' ? `if (req.cookies && req.cookies[authConstants.COOKIE_NAME]) {
     return res.redirect(routes.AFTER_LOGIN);
-  }`}
+  }` : ''}
   return res.redirect(routes.AUTH.LOGIN);
 });
 `;
@@ -3108,16 +3223,29 @@ fs.writeFileSync('views/error.hbs', `{{> header}}
 
 // Entity Views Generator (cards, list, detail, addModal, editModal)
 allEntities.forEach(ent => {
+  if (ent.viewType === 'none') return;
   const edir = `views/${ent.name}`;
   fs.mkdirSync(`${edir}/partials`, { recursive: true });
 
   const pagePath = `/admin/${ent.col}`;
   const isBoth = ent.viewType === 'both';
   const isCard = ent.viewType === 'card';
-  const isTable = ent.viewType === 'table';
+  const isTable = ent.viewType === 'table' || ent.viewType === 'list';
 
   const fieldsList = parseFields(ent.fields || []);
   const references = ent.references || [];
+
+  const isImageField = (f) => {
+    if (!f) return false;
+    return f.ui === 'image' || f.type === 'Image' || f.type === '[Image]' || /image|avatar|photo|thumb|poster|logo|banner|img/i.test(f.name || '');
+  };
+
+  const titleField = fieldsList.find(f => f.isTitle)
+    || fieldsList.find(f => f.name.toLowerCase() === (ent.name + 'name').toLowerCase())
+    || fieldsList.find(f => /^(name|title|username|fullname|label|code)$/i.test(f.name))
+    || fieldsList.find(f => f.type === 'String' && /name|title|alias|label|code/i.test(f.name))
+    || fieldsList.find(f => f.type === 'String' && !isImageField(f));
+  const titleProp = titleField ? titleField.name : 'name';
 
   let addInputs = '';
   let editInputs = '';
@@ -3502,7 +3630,7 @@ allEntities.forEach(ent => {
             </div>{{/if}}`;
     } else if (f.isPercent || f.ui === 'percent' || /^(off|discount|percent)$/i.test(f.name)) {
       cardMiscHtml += `<div class="d-flex gap-1 align-items-baseline mb-1"><span class="text-muted small text-uppercase fw-semibold" style="min-width:80px">${f.label}</span><span class="fw-bold text-primary small">{{percent this.${f.name}}}</span></div>`;
-    } else if (!/^(name|title|username|price|progress|thumbnail|image)$/i.test(f.name)) {
+    } else if (!isImageField(f) && f.name !== titleProp && !/^(name|title|username|price|progress|thumbnail|image|description|content|body)$/i.test(f.name)) {
       cardMiscHtml += `<div class="d-flex gap-1 align-items-baseline mb-1"><span class="text-muted small text-uppercase fw-semibold" style="min-width:80px">${f.label}</span><span class="fw-semibold text-dark small text-truncate" style="max-width:160px" title="{{this.${f.name}}}">{{this.${f.name}}}</span></div>`;
     }
   });
@@ -3521,11 +3649,6 @@ allEntities.forEach(ent => {
               </div>
             </div>{{/if}}`;
   }
-
-  const isImageField = (f) => {
-    if (!f) return false;
-    return f.ui === 'image' || f.type === 'Image' || f.type === '[Image]' || /image|avatar|photo|thumb|poster|logo|banner/i.test(f.name || '');
-  };
 
   const imgField = fieldsList.find(isImageField);
   let cardImageHtml = '';
@@ -3571,9 +3694,9 @@ allEntities.forEach(ent => {
            onclick="window.location='${pagePath}/{{this._id}}'">
         ${cardImageHtml}
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start mb-2">
-            <h5 class="card-title fw-bold mb-0">{{#if this.name}}{{this.name}}{{else}}{{#if this.title}}{{this.title}}{{else}}{{#if this.username}}{{this.username}}{{else}}{{this._id}}{{/if}}{{/if}}{{/if}}</h5>
-            {{#if this.price}}<span class="badge bg-primary fs-6">\${{this.price}}</span>{{/if}}
+          <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+            <h5 class="card-title fw-bold mb-0 text-break flex-grow-1">{{#if this.${titleProp}}}{{this.${titleProp}}}{{else if this.name}}{{this.name}}{{else if this.title}}{{this.title}}{{else}}{{this._id}}{{/if}}</h5>
+            {{#if this.price}}<span class="badge bg-primary fs-6 flex-shrink-0 ms-auto">\${{this.price}}</span>{{/if}}
           </div>
           ${cardBadges}
           ${cardCategoriesHtml}
@@ -3719,7 +3842,7 @@ allEntities.forEach(ent => {
               <td class="text-end text-nowrap" style="width: 190px;">
                 <a href="${pagePath}/{{this._id}}" class="btn btn-sm btn-outline-primary me-1">Details</a>
                 <button type="button" class="btn btn-sm btn-outline-warning me-1" data-bs-toggle="modal" data-bs-target="#editModal-{{this._id}}">Edit</button>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteItem('${pagePath}/{{this._id}}', '${pagePath}/list')">Delete</button>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteItem('${pagePath}/{{this._id}}', '${pagePath}')">Delete</button>
               </td>
             </tr>
           {{else}}
@@ -3841,40 +3964,29 @@ allEntities.forEach(ent => {
   }
 
 
-  // Split detailRows into image+badge (left col) and text fields (right col)
-  const hasImgField = fieldsList.some(f => isImageField(f));
-  let detailImgCard = '';
-  if (hasImgField) {
-    const imgF = fieldsList.find(isImageField);
-    const isArr = imgF && (imgF.type === '[Image]' || imgF.type === '[String]');
-    detailImgCard = isArr
-      ? `{{#if item.${imgF.name}}}<div style="height:220px;overflow:hidden;border-radius:8px 8px 0 0;">{{#each item.${imgF.name}}}{{#if @first}}<img src="{{this}}" class="w-100 h-100" style="object-fit:cover;" onerror="this.onerror=null;this.src='https://placehold.co/480x220?text=No+Image';">{{/if}}{{/each}}</div>{{/if}}`
-      : `{{#if item.${imgF ? imgF.name : 'image'}}}<div style="height:220px;overflow:hidden;border-radius:8px 8px 0 0;"><img src="{{item.${imgF ? imgF.name : 'image'}}}" class="w-100 h-100" style="object-fit:cover;" onerror="this.onerror=null;this.src='https://placehold.co/480x220?text=No+Image';"></div>{{/if}}`;
-  }
-  // Badge rows (Boolean, gender, enum) for left card
-  let detailBadgeRows = '';
-  fieldsList.forEach(f => {
-    const isGen = f.ui === 'gender' || /^(gender|sex|ismale)$/i.test(f.name);
-    if (isGen) {
-      detailBadgeRows += `{{#if item.${f.name}}}<span class="badge bg-primary me-1 mb-2">Male</span>{{else}}<span class="badge bg-danger me-1 mb-2">Female</span>{{/if}}`;
-    } else if (f.type === 'Boolean' || f.ui === 'switch') {
-      detailBadgeRows += `{{#if item.${f.name}}}<span class="badge bg-success me-1 mb-2">${f.label} ✓</span>{{else}}<span class="badge bg-secondary me-1 mb-2">No ${f.label}</span>{{/if}}`;
-    } else if (f.ui === 'select' || (f.enumValues && f.enumValues.length > 0)) {
-      detailBadgeRows += `{{#if item.${f.name}}}<span class="badge bg-secondary me-1 mb-2">{{item.${f.name}}}</span>{{/if}}`;
-    }
-  });
-  // Text/number/date/image rows for right card (skip booleans, gender, enum already in badges)
+  // Unified single-card detail rows
   let detailTextRows = ent.isManager
     ? `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${capitalize(config.manager.userField)}</span><span class="fw-semibold text-dark">{{item.${config.manager.userField}}}</span></div>`
     : '';
   fieldsList.forEach(f => {
     const isGen = f.ui === 'gender' || /^(gender|sex|ismale)$/i.test(f.name);
-    if (isGen || f.type === 'Boolean' || f.ui === 'switch' || f.ui === 'select' || (f.enumValues && f.enumValues.length > 0)) return;
+    if (isGen) {
+      detailTextRows += `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>{{#if item.${f.name}}}<span class="badge bg-primary">Male</span>{{else}}<span class="badge bg-danger">Female</span>{{/if}}</div>`;
+      return;
+    }
+    if (f.type === 'Boolean' || f.ui === 'switch') {
+      detailTextRows += `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>{{#if item.${f.name}}}<span class="badge bg-success">${f.label} ✓</span>{{else}}<span class="badge bg-secondary">No ${f.label}</span>{{/if}}</div>`;
+      return;
+    }
+    if (f.ui === 'select' || (f.enumValues && f.enumValues.length > 0)) {
+      detailTextRows += `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>{{#if item.${f.name}}}<span class="badge bg-secondary fs-6">{{item.${f.name}}}</span>{{else}}<span class="text-muted small">—</span>{{/if}}</div>`;
+      return;
+    }
     if (isImageField(f)) {
       const isArrI = f.type === '[Image]' || f.type === '[String]';
       detailTextRows += isArrI
         ? `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>{{#if item.${f.name}}}<div class="d-flex gap-2 flex-wrap mt-1">{{#each item.${f.name}}}<a href="{{this}}" target="_blank"><img src="{{this}}" class="img-thumbnail" style="width:80px;height:80px;object-fit:cover;" onerror="this.onerror=null;this.src='https://placehold.co/80x80?text=Err';"></a>{{/each}}</div>{{else}}<span class="text-muted small">No image</span>{{/if}}</div>`
-        : `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>{{#if item.${f.name}}}<a href="{{item.${f.name}}}" target="_blank"><img src="{{item.${f.name}}}" class="img-thumbnail mt-1" style="width:{{@root.uiConfig.IMAGE.DETAIL.WIDTH}}px;height:{{@root.uiConfig.IMAGE.DETAIL.HEIGHT}}px;object-fit:{{@root.uiConfig.IMAGE.DETAIL.FIT}};" onerror="this.onerror=null;this.src='https://placehold.co/260x260?text=No+Image';"></a>{{else}}<span class="text-muted small">No image</span>{{/if}}</div>`;
+        : `<div class="mb-3 pb-2 border-bottom"><span class="text-muted small text-uppercase fw-semibold d-block">${f.label}</span>{{#if item.${f.name}}}<a href="{{item.${f.name}}}" target="_blank"><img src="{{item.${f.name}}}" class="img-thumbnail mt-1" style="max-width:260px;max-height:260px;object-fit:contain;" onerror="this.onerror=null;this.src='https://placehold.co/260x260?text=No+Image';"></a>{{else}}<span class="text-muted small">No image</span>{{/if}}</div>`;
       return;
     }
     if (f.ui === 'progress') {
@@ -3896,33 +4008,20 @@ allEntities.forEach(ent => {
 
   fs.writeFileSync(`${edir}/detail.hbs`, `{{> header}}
 <div class="container-fluid px-3 px-md-4 my-4">
-  <div class="row g-4" style="max-width:960px; margin:0 auto;">
-    <div class="col-12 col-md-5">
-      <div class="card shadow-sm border-0 h-100">
-        ${detailImgCard}
-        <div class="card-body p-4">
-          <h4 class="fw-bold mb-1">{{#if item.name}}{{item.name}}{{else}}{{#if item.title}}{{item.title}}{{else}}{{#if item.username}}{{item.username}}{{else}}—{{/if}}{{/if}}{{/if}}</h4>
-          {{#if item.price}}<span class="badge bg-primary fs-6 mb-2">\\${{item.price}}</span>{{/if}}
-          <hr class="my-2">
-          ${detailBadgeRows}
+  <div style="max-width:680px; margin:0 auto;">
+    <div class="card shadow-sm border-0 mb-3">
+      <div class="card-body p-4">
+        ${detailTextRows}
+        <div class="mt-3 pt-2 border-top">
+          <span class="text-muted small text-uppercase fw-semibold d-block">Record ID</span>
+          <code class="text-muted small">{{item._id}}</code>
         </div>
       </div>
     </div>
-    <div class="col-12 col-md-7 d-flex flex-column gap-3">
-      <div class="card shadow-sm border-0">
-        <div class="card-body p-4">
-          ${detailTextRows}
-          <div class="mt-3 pt-2 border-top">
-            <span class="text-muted small text-uppercase fw-semibold d-block">Record ID</span>
-            <code class="text-muted small">{{item._id}}</code>
-          </div>
-        </div>
-      </div>
-      <div class="d-flex gap-2 flex-wrap">
-        <a href="${pagePath}" class="btn btn-outline-secondary">&larr; Back</a>
-        <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#editModal-{{item._id}}">Edit</button>
-        <button type="button" class="btn btn-danger" onclick="deleteItem('${pagePath}/{{item._id}}', '${pagePath}')">Delete</button>
-      </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="${pagePath}" class="btn btn-outline-secondary">&larr; Back</a>
+      <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#editModal-{{item._id}}">Edit</button>
+      <button type="button" class="btn btn-danger" onclick="deleteItem('${pagePath}/{{item._id}}', '${pagePath}')">Delete</button>
     </div>
   </div>
 </div>
@@ -3978,6 +4077,7 @@ async function executeDelete(url, redirectUrl) {
     ${config.authMode === 'jwt_localstorage' ? `const localToken = (window.localStorage && localStorage.getItem('token')) || '';
     if (localToken) {
       reqHeaders['Authorization'] = 'Bearer ' + localToken;
+      reqHeaders['access_key'] = localToken;
     }` : ''}
     const response = await fetch(url, {
       method: 'DELETE',
@@ -3985,10 +4085,10 @@ async function executeDelete(url, redirectUrl) {
     });
     const result = await response.json().catch(() => ({}));
     if (response.ok && result.success !== false) {
-      const msg = encodeURIComponent(result.message || 'Deleted successfully');
       const targetUrl = (redirectUrl && redirectUrl !== window.location.pathname) ? redirectUrl : window.location.pathname;
+      ${config.authMode === 'session' ? `window.location.href = targetUrl;` : `const msg = encodeURIComponent(result.message || 'Deleted successfully');
       const sep = targetUrl.includes('?') ? '&' : '?';
-      window.location.href = targetUrl + sep + 'msg=' + msg;
+      window.location.href = targetUrl + sep + 'msg=' + msg;`}
     } else {
       alert(result.message || 'Delete operation failed.');
     }
@@ -4331,8 +4431,8 @@ async function runProvisioning() {
   const mgrCount = await mgrCol.countDocuments();
   if (mgrCount === 0) {
     const bcrypt = require('bcryptjs');
-    const seedUserValue = process.env.MGR_USER_VALUE;
-    const seedPassValue = process.env.MGR_PASS_VALUE;
+    const seedUserValue = process.env.MGR_USER_VALUE || 'admin';
+    const seedPassValue = process.env.MGR_PASS_VALUE || '123456';
     const defaultUser = {
       [config.manager.userField]: seedUserValue,
       [config.manager.passField]: bcrypt.hashSync(seedPassValue, 10),

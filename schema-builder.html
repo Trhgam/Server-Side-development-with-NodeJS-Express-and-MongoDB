@@ -2128,6 +2128,10 @@ html&gt;body{padding:0}&lt;/style&gt;
                   &lt;input class=&quot;form-check-input&quot; type=&quot;checkbox&quot; data-entity=&quot;${entity.id}&quot; data-field=&quot;${field.id}&quot; data-prop=&quot;inCard&quot; ${field.inCard ? &#x27;checked&#x27; : &#x27;&#x27;}&gt;
                   &lt;span class=&quot;form-check-label&quot;&gt;In Card&lt;/span&gt;
                 &lt;/label&gt;
+                &lt;label class=&quot;form-check&quot; title=&quot;Trường hiển thị tiêu đề chính trên thẻ Card (chỉ chọn 1 trường)&quot;&gt;
+                  &lt;input class=&quot;form-check-input&quot; type=&quot;radio&quot; name=&quot;title_${entity.id}&quot; data-entity=&quot;${entity.id}&quot; data-field=&quot;${field.id}&quot; data-prop=&quot;isTitle&quot; ${field.isTitle ? &#x27;checked&#x27; : &#x27;&#x27;}&gt;
+                  &lt;span class=&quot;form-check-label&quot;&gt;Title&lt;/span&gt;
+                &lt;/label&gt;
               &lt;/div&gt;
               &lt;button type=&quot;button&quot; class=&quot;btn btn-ghost&quot; data-action=&quot;remove-field&quot; data-entity=&quot;${entity.id}&quot; data-field=&quot;${field.id}&quot; aria-label=&quot;Xóa field&quot;&gt;
                 &lt;i data-lucide=&quot;trash-2&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;
@@ -2173,6 +2177,10 @@ html&gt;body{padding:0}&lt;/style&gt;
               &lt;label class=&quot;form-check&quot; title=&quot;Hiển thị trên thẻ Card&quot;&gt;
                 &lt;input class=&quot;form-check-input&quot; type=&quot;checkbox&quot; data-entity=&quot;${entity.id}&quot; data-field=&quot;${field.id}&quot; data-prop=&quot;inCard&quot; ${field.inCard ? &#x27;checked&#x27; : &#x27;&#x27;}&gt;
                 &lt;span class=&quot;form-check-label&quot;&gt;In Card&lt;/span&gt;
+              &lt;/label&gt;
+              &lt;label class=&quot;form-check&quot; title=&quot;Trường hiển thị tiêu đề chính trên thẻ Card (chỉ chọn 1 trường)&quot;&gt;
+                &lt;input class=&quot;form-check-input&quot; type=&quot;radio&quot; name=&quot;title_${entity.id}&quot; data-entity=&quot;${entity.id}&quot; data-field=&quot;${field.id}&quot; data-prop=&quot;isTitle&quot; ${field.isTitle ? &#x27;checked&#x27; : &#x27;&#x27;}&gt;
+                &lt;span class=&quot;form-check-label&quot;&gt;Title&lt;/span&gt;
               &lt;/label&gt;
               ${(field.type === &#x27;String&#x27; || field.type === &#x27;Image&#x27;) ? `
               &lt;label class=&quot;form-check&quot; title=&quot;Cắt khoảng trắng thừa hai đầu chuỗi&quot;&gt;
@@ -2255,6 +2263,7 @@ html&gt;body{padding:0}&lt;/style&gt;
             if (field.required) parts.push(&#x27;required&#x27;);
             if (field.unique) parts.push(&#x27;unique&#x27;);
             if (field.inCard) parts.push('card');
+            if (field.isTitle) parts.push('title');
             return `  ${field.name || &#x27;field&#x27;}: ${parts.join(&#x27;|&#x27;)}`;
           });
           return `entity ${entity.name || &#x27;entity&#x27;} collection=${entity.collection || &#x27;&#x27;} {\n${lines.join(&#x27;\n&#x27;)}\n}`;
@@ -2295,9 +2304,10 @@ html&gt;body{padding:0}&lt;/style&gt;
             if (field.required) opts.push(&#x27;required: true&#x27;);
             if (field.unique) opts.push(&#x27;unique: true&#x27;);
             const cardComment = field.inCard ? ' card' : '';
+            const titleComment = field.isTitle ? ' title' : '';
             const comment = field.kind === 'reference'
-              ? ` // ui=select${field.displayField ? ` display=${field.displayField}` : ''}${field.oneToOne ? ' 1:1' : ''}${cardComment}`
-              : ` // ui=${field.ui || 'text'}${cardComment}`;
+              ? ` // ui=select${field.displayField ? ` display=${field.displayField}` : ''}${field.oneToOne ? ' 1:1' : ''}${cardComment}${titleComment}`
+              : ` // ui=${field.ui || 'text'}${cardComment}${titleComment}`;
             return `  ${field.name || &#x27;field&#x27;}: { ${opts.join(&#x27;, &#x27;)} },${comment}`;
           });
           return `// entity: ${entity.name || &#x27;entity&#x27;}; collection: ${entity.collection || &#x27;&#x27;}\nconst ${entity.name || &#x27;entity&#x27;}Schema = new mongoose.Schema({\n${fields.join(&#x27;\n&#x27;)}\n}, { timestamps: true, collection: &quot;${entity.collection || &#x27;&#x27;}&quot; });`;
@@ -2362,6 +2372,7 @@ html&gt;body{padding:0}&lt;/style&gt;
               }
             });
             const inCard = flags.has('card') || flags.has('incard');
+            const isTitle = flags.has('title') || flags.has('istitle') || flags.has('primary');
             if (type === &#x27;ObjectId&#x27; || optionMap.ref) {
               entity.fields.push({
                 id: nextId(&#x27;field&#x27;), kind: &#x27;reference&#x27;, name,
@@ -2370,6 +2381,7 @@ html&gt;body{padding:0}&lt;/style&gt;
                 required: flags.has(&#x27;required&#x27;) || flags.has(&#x27;req&#x27;),
                 unique: flags.has(&#x27;unique&#x27;),
                 inCard,
+                isTitle,
                 ui: &#x27;select&#x27;
               });
             } else {
@@ -2378,6 +2390,7 @@ html&gt;body{padding:0}&lt;/style&gt;
                 required: flags.has(&#x27;required&#x27;) || flags.has(&#x27;req&#x27;),
                 unique: flags.has(&#x27;unique&#x27;),
                 inCard,
+                isTitle,
                 trim: flags.has(&#x27;trim&#x27;),
                 lowercase: flags.has(&#x27;lowercase&#x27;),
                 uppercase: flags.has(&#x27;uppercase&#x27;),
@@ -2389,6 +2402,13 @@ html&gt;body{padding:0}&lt;/style&gt;
               });
             }
           }
+          let titleSet = false;
+          entity.fields.forEach(f =&gt; {
+            if (f.isTitle) {
+              if (titleSet) f.isTitle = false;
+              else titleSet = true;
+            }
+          });
           result.push(entity);
         }
         if (!result.length) throw new Error(&#x27;Không tìm thấy entity hợp lệ trong DSL.&#x27;);
@@ -2435,11 +2455,12 @@ html&gt;body{padding:0}&lt;/style&gt;
           const uiMatch = comment.match(/ui=([^\s]+)/);
           const displayMatch = comment.match(/display=([^\s]+)/);
           const inCard = /\b(card|incard)\b/i.test(comment);
+          const isTitle = /\b(title|primary)\b/i.test(comment);
           if (/mongoose\.Schema\.Types\.ObjectId/.test(body) || refMatch) {
             current.fields.push({
               id: nextId(&#x27;field&#x27;), kind: &#x27;reference&#x27;, name,
               target: refMatch ? refMatch[1] : &#x27;&#x27;, displayField: displayMatch ? displayMatch[1] : &#x27;&#x27;,
-              oneToOne, required, unique, inCard, ui: &#x27;select&#x27;
+              oneToOne, required, unique, inCard, isTitle, ui: &#x27;select&#x27;
             });
             continue;
           }
@@ -2452,12 +2473,21 @@ html&gt;body{padding:0}&lt;/style&gt;
           if (defVal.startsWith(&#x27;&quot;&#x27;) &amp;&amp; defVal.endsWith(&#x27;&quot;&#x27;)) defVal = defVal.slice(1, -1);
           if (defVal.startsWith(&quot;&#x27;&quot;) &amp;&amp; defVal.endsWith(&quot;&#x27;&quot;)) defVal = defVal.slice(1, -1);
           current.fields.push({
-            id: nextId(&#x27;field&#x27;), kind: &#x27;normal&#x27;, name, type, required, unique, inCard, trim, lowercase, uppercase,
+            id: nextId(&#x27;field&#x27;), kind: &#x27;normal&#x27;, name, type, required, unique, inCard, isTitle, trim, lowercase, uppercase,
             ui: uiMatch ? uiMatch[1] : defaultUi(type),
             defaultValue: defVal,
             min: minMatch ? minMatch[1].trim() : &#x27;&#x27;, max: maxMatch ? maxMatch[1].trim() : &#x27;&#x27;
           });
         }
+        result.forEach(ent =&gt; {
+          let titleSet = false;
+          ent.fields.forEach(f =&gt; {
+            if (f.isTitle) {
+              if (titleSet) f.isTitle = false;
+              else titleSet = true;
+            }
+          });
+        });
         if (!result.length) throw new Error(&#x27;Giữ dòng comment &quot;// entity: ...; collection: ...&quot; để đồng bộ Schema → DSL.&#x27;);
         return result;
       }
@@ -2480,12 +2510,28 @@ html&gt;body{padding:0}&lt;/style&gt;
       });
 
       grid.addEventListener(&#x27;click&#x27;, event =&gt; {
+        const radio = event.target.closest(&#x27;input[type=&quot;radio&quot;][data-prop=&quot;isTitle&quot;]&#x27;);
+        if (radio) {
+          const entity = entities.find(item =&gt; item.id === radio.dataset.entity);
+          const field = entity?.fields.find(item =&gt; item.id === radio.dataset.field);
+          if (field) {
+            if (field.isTitle) {
+              field.isTitle = false;
+              radio.checked = false;
+            } else {
+              entity.fields.forEach(f =&gt; { f.isTitle = (f.id === field.id); });
+            }
+            renderBuilder();
+            syncEditors();
+            return;
+          }
+        }
         const button = event.target.closest(&#x27;[data-action]&#x27;);
         if (!button) return;
         const entity = entities.find(item =&gt; item.id === button.dataset.entity);
         if (!entity) return;
         if (button.dataset.action === &#x27;add-field&#x27;) {
-          entity.fields.push({ id: nextId(&#x27;field&#x27;), kind: &#x27;normal&#x27;, name: `field${entity.fields.length + 1}`, type: &#x27;String&#x27;, required: false, unique: false, trim: false, lowercase: false, uppercase: false, ui: &#x27;text&#x27;, defaultValue: &#x27;&#x27;, min: &#x27;&#x27;, max: &#x27;&#x27; });
+          entity.fields.push({ id: nextId(&#x27;field&#x27;), kind: &#x27;normal&#x27;, name: `field${entity.fields.length + 1}`, type: &#x27;String&#x27;, required: false, unique: false, inCard: false, isTitle: false, trim: false, lowercase: false, uppercase: false, ui: &#x27;text&#x27;, defaultValue: &#x27;&#x27;, min: &#x27;&#x27;, max: &#x27;&#x27; });
         } else if (button.dataset.action === &#x27;remove-field&#x27;) {
           entity.fields = entity.fields.filter(field =&gt; field.id !== button.dataset.field);
         } else if (button.dataset.action === &#x27;remove-entity&#x27;) {
@@ -2501,6 +2547,7 @@ html&gt;body{padding:0}&lt;/style&gt;
       function updateFromControl(event) {
         const control = event.target.closest(&#x27;[data-prop]&#x27;);
         if (!control) return;
+        if (control.dataset.prop === &#x27;isTitle&#x27;) return;
         const entity = entities.find(item =&gt; item.id === control.dataset.entity);
         if (!entity) return;
         const field = control.dataset.field ? entity.fields.find(item =&gt; item.id === control.dataset.field) : null;
